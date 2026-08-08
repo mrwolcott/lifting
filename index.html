@@ -200,6 +200,7 @@ function defaults(){
     locks:{cycle:0,map:{}},
     kgMode:false,
     rack:{press:{h:'',s:''},dl:{h:'',s:''},bench:{h:'',s:''},squat:{h:'',s:''}},
+    accEdits:{removed:{push:[],pull:[],slcore:[],arms:[]}, added:{push:[],pull:[],slcore:[],arms:[]}},
     deloadMode:'seventh',   /* 'none' | 'week4' | 'seventh' */
     override:null,          /* {type:'deload'|'seventh', day:0-3, mode:'deload'|'tmtest', bumpAfter:bool, manual:bool} */
     sheetsUrl:'',
@@ -230,7 +231,16 @@ const BB_MOVES=new Set(['Pendlay Row','Neutral-Grip Pullups','Neutral-Grip Pullu
   'Weighted Dips (Belt)','Barbell Curl','EZ Bar Curl','EZ Bar Skullcrushers','Skullcrushers (Swiss Bar)',
   'Barbell RDL','Hip Thrust','Trap Bar Shrug','Landmine Press','Half-Kneeling Landmine Press',
   'Landmine (Meadows) Row','Landmine Rotation']);
-const isBB=n=>BB_MOVES.has(n);
+function isBB(n){
+  if(BB_MOVES.has(n)) return true;
+  const a=S.accEdits&&S.accEdits.added;
+  if(a) for(const c in a){ if((a[c]||[]).some(it=>it.n===n&&it.bb)) return true; }
+  return false;
+}
+function accList(cat){
+  const rem=new Set((S.accEdits.removed[cat])||[]);
+  return ACC[cat].filter(it=>!rem.has(it.n)).concat(S.accEdits.added[cat]||[]);
+}
 const unitLabel=()=>S.kgMode?'kg':'lb';
 function rndKg(kg){const v=Math.round(kg/2.5)*2.5;return +v.toFixed(1);}
 function dispW(lb){return S.kgMode?rndKg(lb*LB2KG):lb;}          /* computed barbell weights */
@@ -327,6 +337,7 @@ function getDraft(){
 /* ---------------- Views ---------------- */
 let TAB='today';
 let EXPANDED=null; /* expanded chart lift id */
+let AMCAT='push';  /* accessory-menu editor category */
 function setPtrLabel(){
   let t;
   if(S.override){
@@ -492,12 +503,18 @@ function renderToday(){
   $('#finish').onclick=()=>finishSession(d,wts);
 }
 function accOptions(cat,selected){
-  let html='',curG='';
-  for(const it of ACC[cat]){
-    if(it.g!==curG){if(curG)html+='</optgroup>';html+=`<optgroup label="${it.g}">`;curG=it.g;}
-    html+=`<option ${selected===it.n?'selected':''}>${it.n}</option>`;
+  const groups=new Map();
+  for(const it of accList(cat)){
+    if(!groups.has(it.g)) groups.set(it.g,[]);
+    groups.get(it.g).push(it);
   }
-  return html+'</optgroup>';
+  let html='';
+  for(const [g,items] of groups){
+    html+=`<optgroup label="${esc(g)}">`;
+    for(const it of items) html+=`<option ${selected===it.n?'selected':''}>${esc(it.n)}</option>`;
+    html+='</optgroup>';
+  }
+  return html;
 }
 function e1rmLine(w,r){
   if(!r||r<1) return '';
@@ -778,6 +795,23 @@ function renderSettings(){
       <input type="number" inputmode="numeric" id="s-rs-${l.id}" placeholder="safeties" style="width:88px" value="${esc((S.rack[l.id]||{}).s??'')}"></div>`).join('')}
     <p class="note">Leave blank for lifts that don't use the rack (e.g., trap bar).</p>
   </div>
+  <div class="card"><h2>Accessory menu <span class="sub">add or remove movements</span></h2>
+    <select id="am-cat">${['push','pull','slcore','arms'].map(c=>
+      `<option value="${c}" ${AMCAT===c?'selected':''}>${CATLABEL[c]}</option>`).join('')}</select>
+    <div id="am-list" style="margin-top:4px">${amListHtml()}</div>
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
+      <input type="text" id="am-name" placeholder="New movement name">
+      <div class="acc-inputs">
+        <select id="am-group" style="width:50%">
+          ${[...new Set(ACC[AMCAT].map(it=>it.g))].concat('Other').map(g=>`<option>${esc(g)}</option>`).join('')}
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;width:50%;font-size:13px;color:var(--text2)">
+          <input type="checkbox" id="am-bb" style="width:20px;height:20px"> plate-loaded (kg&nbsp;toggle)</label>
+      </div>
+      <button class="btn ghost" id="am-add" style="margin-top:8px">Add movement</button>
+      <button class="btn ghost small" id="am-restore" style="margin-top:8px">Restore removed defaults</button>
+    </div>
+  </div>
   <div class="card"><h2>Deload schedule</h2>
     <div class="kv"><label>Mode</label>
       <select id="s-deload" class="wide">
@@ -823,6 +857,7 @@ function renderSettings(){
   <button class="btn" id="saveSettings">Save settings</button>
   ${storageWarn()}`;
   $('#main').innerHTML=html;
+  bindAccMenu();
   $('#saveSettings').onclick=()=>{
     LIFTS.forEach(l=>{
       const v=parseFloat($(`#s-tm-${l.id}`).value); if(v>0)S.tms[l.id]=v;
@@ -881,6 +916,50 @@ function renderSettings(){
       try{localStorage.removeItem(KEY);}catch(e){}
       S=loadState();render();
     }
+  };
+}
+function amListHtml(){
+  const groups=new Map();
+  for(const it of accList(AMCAT)){
+    if(!groups.has(it.g)) groups.set(it.g,[]);
+    groups.get(it.g).push(it);
+  }
+  let h='';
+  for(const [g,items] of groups){
+    h+=`<div class="cat" style="margin-top:10px">${esc(g)}</div>`;
+    for(const it of items){
+      const custom=(S.accEdits.added[AMCAT]||[]).some(x=>x.n===it.n);
+      h+=`<div class="row" style="padding:3px 0;border-bottom:1px solid var(--line)">
+        <span class="grow" style="font-size:14px">${esc(it.n)}${custom?' <span style="color:var(--muted);font-size:11px">custom</span>':''}</span>
+        <button class="btn ghost small" data-amrm="${esc(it.n)}" style="padding:4px 12px;min-height:32px">✕</button></div>`;
+    }
+  }
+  return h||'<p class="note">Nothing here — add a movement below.</p>';
+}
+function bindAccMenu(){
+  $('#am-cat').onchange=e=>{AMCAT=e.target.value;renderSettings();};
+  document.querySelectorAll('[data-amrm]').forEach(b=>b.onclick=()=>{
+    const n=b.dataset.amrm;
+    const added=S.accEdits.added[AMCAT]||[];
+    const i=added.findIndex(x=>x.n===n);
+    if(i>-1) added.splice(i,1);
+    else{
+      S.accEdits.removed[AMCAT]=S.accEdits.removed[AMCAT]||[];
+      S.accEdits.removed[AMCAT].push(n);
+    }
+    save();renderSettings();
+  });
+  $('#am-add').onclick=()=>{
+    const n=$('#am-name').value.trim();
+    if(!n){flash('Name the movement first');return;}
+    if(accList(AMCAT).some(it=>it.n===n)){flash('Already in the list');return;}
+    S.accEdits.added[AMCAT]=S.accEdits.added[AMCAT]||[];
+    S.accEdits.added[AMCAT].push({g:$('#am-group').value,n,bb:$('#am-bb').checked});
+    S.accEdits.removed[AMCAT]=(S.accEdits.removed[AMCAT]||[]).filter(x=>x!==n);
+    save();renderSettings();flash(`Added to ${CATLABEL[AMCAT]}`);
+  };
+  $('#am-restore').onclick=()=>{
+    S.accEdits.removed[AMCAT]=[];save();renderSettings();flash('Defaults restored');
   };
 }
 function downloadFile(content,name,type){
