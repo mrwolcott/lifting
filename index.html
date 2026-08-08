@@ -74,6 +74,7 @@
   .lockrow{display:flex;align-items:center;gap:8px}
   .lockrow b{flex:1;font-size:15px}
   .lastuse{font-size:12px;color:var(--muted);margin-top:6px}
+  .rackline{font-size:14px;color:var(--text2);margin-top:6px;font-weight:600}
   textarea{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--text);
     padding:10px;font-size:15px;min-height:60px;resize:vertical;font-family:inherit}
   nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);
@@ -157,12 +158,19 @@ const ACC = {
     {g:'Rows & Chins',n:'Ring Rows'},{g:'Rows & Chins',n:'Chin-Ups (Belt)'},{g:'Rows & Chins',n:'Neutral-Grip Pullups (extra)'},
     {g:'Rear Delt & Traps',n:'Band Face Pulls'},{g:'Rear Delt & Traps',n:'Band Pull-Aparts'},
     {g:'Rear Delt & Traps',n:'Rear Delt Fly'},{g:'Rear Delt & Traps',n:'Trap Bar Shrug'},{g:'Rear Delt & Traps',n:'DB Shrug'},
-    {g:'Biceps',n:'Barbell Curl'},{g:'Biceps',n:'DB Curl'},{g:'Biceps',n:'Hammer Curl'},{g:'Biceps',n:'Incline DB Curl'},
+    {g:'Biceps',n:'EZ Bar Curl'},{g:'Biceps',n:'Barbell Curl'},{g:'Biceps',n:'DB Curl'},{g:'Biceps',n:'Hammer Curl'},{g:'Biceps',n:'Incline DB Curl'},
+  ],
+  arms:[
+    {g:'Biceps',n:'EZ Bar Curl'},{g:'Biceps',n:'Barbell Curl'},{g:'Biceps',n:'DB Curl'},
+    {g:'Biceps',n:'Hammer Curl'},{g:'Biceps',n:'Incline DB Curl'},
+    {g:'Triceps',n:'EZ Bar Skullcrushers'},{g:'Triceps',n:'Overhead DB Extension'},
+    {g:'Triceps',n:'Band Pushdowns'},{g:'Triceps',n:'Close-Grip Pushups'},
   ],
   slcore:[
     {g:'Single-Leg',n:'RFE Split Squat'},{g:'Single-Leg',n:'Walking Lunge (DB/Vest)'},
     {g:'Single-Leg',n:'Box Step-Up'},{g:'Single-Leg',n:'Single-Leg RDL'},
     {g:'Posterior & Legs',n:'Barbell RDL'},{g:'Posterior & Legs',n:'Hip Thrust'},{g:'Posterior & Legs',n:'KB Swing'},
+    {g:'Posterior & Legs',n:'Glute-Ham Roller Curl'},
     {g:'Posterior & Legs',n:'Goblet Squat'},{g:'Posterior & Legs',n:'Standing Calf Raise (DB)'},
     {g:'Carries & Sandbag',n:'Farmer Carry'},{g:'Carries & Sandbag',n:'Suitcase Carry'},
     {g:'Carries & Sandbag',n:'Sandbag Bear-Hug Carry'},{g:'Carries & Sandbag',n:'Sandbag Shouldering'},{g:'Carries & Sandbag',n:'Sandbag Squat'},
@@ -170,9 +178,11 @@ const ACC = {
     {g:'Core',n:'Weighted Plank (Vest)'},{g:'Core',n:'Med Ball Situps'},
   ],
 };
-const CATLABEL = {push:'Push', pull:'Pull', slcore:'Single-Leg / Core'};
+const CATLABEL = {push:'Push', pull:'Pull', slcore:'Single-Leg / Core', arms:'Arms'};
 const LOCKED_PULL = {press:'Neutral-Grip Pullups', bench:'Pendlay Row'};
 const PLATES = [45,25,10,5,2.5];
+const KG_PLATES = [25,20,15,10,5,2.5,1.25];
+const LB2KG = 0.45359237;
 
 /* ---------------- State ---------------- */
 const KEY='fsl531v1';
@@ -188,6 +198,8 @@ function defaults(){
     history:[],
     draft:null,
     locks:{cycle:0,map:{}},
+    kgMode:false,
+    rack:{press:{h:'',s:''},dl:{h:'',s:''},bench:{h:'',s:''},squat:{h:'',s:''}},
     deloadMode:'seventh',   /* 'none' | 'week4' | 'seventh' */
     override:null,          /* {type:'deload'|'seventh', day:0-3, mode:'deload'|'tmtest', bumpAfter:bool, manual:bool} */
     sheetsUrl:'',
@@ -213,12 +225,54 @@ function lift(id){return LIFTS.find(l=>l.id===id);}
 function todayISO(){const d=new Date();return d.toISOString().slice(0,10);}
 function fmtDate(iso){const [y,m,d]=iso.split('-');return `${+m}/${+d}/${String(y).slice(2)}`;}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+/* ---- units: state/history are always lb; kg is an entry/display layer ---- */
+const BB_MOVES=new Set(['Pendlay Row','Neutral-Grip Pullups','Neutral-Grip Pullups (extra)','Chin-Ups (Belt)',
+  'Weighted Dips (Belt)','Barbell Curl','EZ Bar Curl','EZ Bar Skullcrushers','Skullcrushers (Swiss Bar)',
+  'Barbell RDL','Hip Thrust','Trap Bar Shrug','Landmine Press','Half-Kneeling Landmine Press',
+  'Landmine (Meadows) Row','Landmine Rotation']);
+const isBB=n=>BB_MOVES.has(n);
+const unitLabel=()=>S.kgMode?'kg':'lb';
+function rndKg(kg){const v=Math.round(kg/2.5)*2.5;return +v.toFixed(1);}
+function dispW(lb){return S.kgMode?rndKg(lb*LB2KG):lb;}          /* computed barbell weights */
+function wOut(lb){                                               /* stored lb -> input display */
+  if(lb===''||lb==null||isNaN(+lb)) return lb;
+  return S.kgMode? +(+lb*LB2KG).toFixed(1) : +lb;
+}
+function wIn(val){                                               /* input -> stored lb */
+  if(val===''||val==null) return '';
+  return S.kgMode? +(+val/LB2KG).toFixed(1) : +val;
+}
 function plates(total,bar){
   bar=+bar; if(!bar||total<bar) return '';
+  if(S.kgMode){
+    let side=(rndKg(total*LB2KG)-bar*LB2KG)/2;
+    side=Math.max(0,Math.round(side/1.25)*1.25);
+    if(side===0) return 'bar';
+    let out=[];
+    for(const p of KG_PLATES){const n=Math.floor(side/p+1e-9);if(n>0){out.push(n>1?`${n}×${p}`:`${p}`);side-=n*p;}}
+    return `${out.join(' + ')} kg/side`;
+  }
   let side=(total-bar)/2, out=[];
   for(const p of PLATES){const n=Math.floor(side/p+1e-9);if(n>0){out.push(n>1?`${n}×${p}`:`${p}`);side-=n*p;}}
   if(side>0.01) out.push(`+${side.toFixed(1)}`);
   return out.length?`${out.join(' + ')} /side`:'bar';
+}
+function rackLine(liftId){
+  const r=(S.rack||{})[liftId]||{};
+  const parts=[];
+  if(r.h!==''&&r.h!=null) parts.push(`Hooks ${r.h}`);
+  if(r.s!==''&&r.s!=null) parts.push(`Safeties ${r.s}`);
+  return parts.length?`<div class="rackline">${parts.join(' · ')}</div>`:'';
+}
+function unitSeg(){
+  return `<div class="seg" style="max-width:150px;margin:8px 0 0">
+    <button id="uLb" class="${S.kgMode?'':'on'}">lb</button>
+    <button id="uKg" class="${S.kgMode?'on':''}">kg</button></div>`;
+}
+function bindUnitSeg(){
+  const lb=$('#uLb'),kg=$('#uKg');
+  if(lb) lb.onclick=()=>{S.kgMode=false;save();render();};
+  if(kg) kg.onclick=()=>{S.kgMode=true;save();render();};
 }
 function flash(msg){const f=$('#flash');f.textContent=msg;f.classList.add('show');setTimeout(()=>f.classList.remove('show'),1800);}
 function ensureLocks(){ if(!S.locks||S.locks.cycle!==S.pointer.cycle){S.locks={cycle:S.pointer.cycle,map:{}};save();} }
@@ -236,7 +290,8 @@ function lastUse(name){
 }
 function lastUseText(name){
   const u=lastUse(name); if(!u) return '';
-  const load=u.weight!==''&&u.weight!=null&&+u.weight!==0?` @ ${u.weight}`:'';
+  const hasW=u.weight!==''&&u.weight!=null&&+u.weight!==0;
+  const load=hasW?(isBB(name)?` @ ${wOut(u.weight)} ${unitLabel()}`:` @ ${u.weight}`):'';
   const reps=u.repsArr?u.repsArr.join('/'):(u.reps?`${u.reps} reps`:'');
   return `Last: ${reps}${load} (${fmtDate(u.date)})`;
 }
@@ -255,7 +310,7 @@ function blankDraft(liftId){
   const d={liftId, date:todayISO(), main:[false,false,false], amrap:'', fsl:[false,false,false,false,false],
     pull:lk?{name:lk, weight:(liftId==='press'?S.pullupWeight:S.pendlayWeight)||'', reps:['','','','','']}:null,
     acc:{}, notes:''};
-  const slots=lk?['push','slcore']:['push','pull','slcore'];
+  const slots=lk?['push','arms']:['push','pull','slcore'];
   for(const cat of slots){
     const locked=S.locks.map[lockKey(liftId,cat)]||'';
     const u=locked?lastUse(locked):null;
@@ -330,13 +385,15 @@ function renderToday(){
   let html=`
   <div class="card">
     <div class="row">
-      <div class="grow"><h2 style="margin:0">${L.name} <span class="sub">TM ${tm}</span></h2></div>
+      <div class="grow"><h2 style="margin:0">${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2></div>
       <select class="daysel" id="daySel" style="width:130px">
         ${LIFTS.map((l,i)=>`<option value="${i}" ${l.id===d.liftId?'selected':''}>Day ${i+1}: ${l.name.split(' ').pop()}</option>`).join('')}
       </select>
     </div>
-    <details class="warmups" style="margin-top:8px"><summary>Warmup — ${wu.join(' / ')}</summary>
-      ${wu.map((w,i)=>`<div class="setrow"><span class="wt">${w}</span><span class="rx">× ${WARMUP.reps[i]}</span>
+    ${rackLine(d.liftId)}
+    ${unitSeg()}
+    <details class="warmups" style="margin-top:8px"><summary>Warmup — ${wu.map(w=>dispW(w)).join(' / ')}</summary>
+      ${wu.map((w,i)=>`<div class="setrow"><span class="wt">${dispW(w)}</span><span class="rx">× ${WARMUP.reps[i]}</span>
         <span class="plates">${plates(w,bar)}</span></div>`).join('')}
     </details>
   </div>
@@ -345,7 +402,7 @@ function renderToday(){
     <h2>Main work <span class="sub">${wk.label}</span></h2>
     ${wts.map((w,i)=>`
       <div class="setrow">
-        <span class="wt">${w}</span><span class="rx">× ${wk.reps[i]}</span>
+        <span class="wt">${dispW(w)}</span><span class="rx">× ${wk.reps[i]}</span>
         <span class="plates">${plates(w,bar)}</span>
         ${i===2?`<input class="amrap" type="number" inputmode="numeric" id="amrap" placeholder="reps" value="${esc(d.amrap)}">`:''}
         <button class="chk ${d.main[i]?'on':''}" data-main="${i}">✓</button>
@@ -354,7 +411,7 @@ function renderToday(){
   </div>
 
   <div class="card">
-    <h2>FSL <span class="sub">5 × 5 @ ${fslWt}</span></h2>
+    <h2>FSL <span class="sub">5 × 5 @ ${dispW(fslWt)} ${unitLabel()}</span></h2>
     <div class="row">
       <span class="plates grow">${plates(fslWt,bar)}</span>
       ${d.fsl.map((v,i)=>`<button class="chk ${v?'on':''}" data-fsl="${i}">✓</button>`).join('')}
@@ -370,18 +427,19 @@ function renderToday(){
       <div class="cat">Pull — non-negotiable</div>
       <div class="row"><b class="grow">${d.pull.name}</b>
         <input type="number" inputmode="decimal" style="width:92px" id="pullWt"
-          placeholder="${d.liftId==='press'?'+lb':'lb'}" value="${esc(d.pull.weight)}"></div>
+          placeholder="${d.liftId==='press'?'+':''}${unitLabel()}" value="${esc(wOut(d.pull.weight))}"></div>
       ${pullupHint?`<div class="banner">${pullupHint}</div>`:''}
       <div class="repgrid">${d.pull.reps.map((r,i)=>
         `<input type="number" inputmode="numeric" data-pullrep="${i}" placeholder="s${i+1}" value="${esc(r)}">`).join('')}</div>
       ${lu?`<div class="lastuse">${lu}</div>`:''}
     </div>`;
   }
-  const slots=d.pull?['push','slcore']:['push','pull','slcore'];
+  const slots=d.pull?['push','arms']:['push','pull','slcore'];
   for(const cat of slots){
     const a=d.acc[cat]||{name:'',weight:'',reps:''};
     const locked=S.locks.map[lockKey(d.liftId,cat)];
     const lu=a.name?lastUseText(a.name):'';
+    const bb=isBB(a.name);
     html+=`<div class="accslot"><div class="cat">${CATLABEL[cat]}${locked?' — locked this cycle':''}</div>`;
     if(locked){
       html+=`<div class="lockrow"><b>${locked}</b>
@@ -393,7 +451,7 @@ function renderToday(){
       </select>`;
     }
     html+=`<div class="acc-inputs">
-        <input type="number" inputmode="decimal" data-accwt="${cat}" placeholder="load" value="${esc(a.weight)}">
+        <input type="number" inputmode="decimal" data-accwt="${cat}" placeholder="load${bb?` (${unitLabel()})`:''}" value="${esc(bb?wOut(a.weight):a.weight)}">
         <input type="number" inputmode="numeric" data-accreps="${cat}" placeholder="total reps" value="${esc(a.reps)}">
       </div>
       ${lu?`<div class="lastuse">${lu}</div>`:''}
@@ -412,8 +470,9 @@ function renderToday(){
   document.querySelectorAll('[data-fsl]').forEach(b=>b.onclick=()=>{const i=+b.dataset.fsl;d.fsl[i]=!d.fsl[i];b.classList.toggle('on',d.fsl[i]);save();});
   const am=$('#amrap');
   if(am) am.oninput=()=>{d.amrap=am.value;$('#e1rmLine').innerHTML=d.amrap?e1rmLine(wts[2],+d.amrap):'';save();};
+  bindUnitSeg();
   const pw=$('#pullWt');
-  if(pw) pw.oninput=()=>{d.pull.weight=pw.value;save();};
+  if(pw) pw.oninput=()=>{d.pull.weight=wIn(pw.value);save();};
   document.querySelectorAll('[data-pullrep]').forEach(inp=>inp.oninput=()=>{d.pull.reps[+inp.dataset.pullrep]=inp.value;save();});
   document.querySelectorAll('[data-accsel]').forEach(sel=>sel.onchange=()=>{
     const c=sel.dataset.accsel;d.acc[c]=d.acc[c]||{};d.acc[c].name=sel.value;
@@ -425,7 +484,8 @@ function renderToday(){
     if(d.acc[c]) d.acc[c]={name:'',weight:'',reps:''};
     save();render();});
   document.querySelectorAll('[data-accwt]').forEach(inp=>inp.oninput=()=>{
-    const c=inp.dataset.accwt;d.acc[c]=d.acc[c]||{};d.acc[c].weight=inp.value;save();});
+    const c=inp.dataset.accwt;d.acc[c]=d.acc[c]||{};
+    d.acc[c].weight=isBB(d.acc[c].name)?wIn(inp.value):inp.value;save();});
   document.querySelectorAll('[data-accreps]').forEach(inp=>inp.oninput=()=>{
     const c=inp.dataset.accreps;d.acc[c]=d.acc[c]||{};d.acc[c].reps=inp.value;save();});
   $('#notes').oninput=()=>{d.notes=$('#notes').value;save();};
@@ -441,7 +501,7 @@ function accOptions(cat,selected){
 }
 function e1rmLine(w,r){
   if(!r||r<1) return '';
-  return `AMRAP ${r} @ ${w} → est. 1RM <b>${e1rm(w,r)}</b>`;
+  return `AMRAP ${r} @ ${dispW(w)} → est. 1RM <b>${dispW(e1rm(w,r))}</b> ${unitLabel()}`;
 }
 function pullupSuggestion(liftId){
   if(liftId!=='press') return '';
@@ -450,7 +510,7 @@ function pullupSuggestion(liftId){
   const top=Math.max(...last.pull.reps.map(r=>+r||0));
   if(top>10){
     const w=+last.pull.weight||0;
-    return `Last time: top set ${top} reps @ ${w>0?`+${w} lb`:'bodyweight'} — add 5 lb today.`;
+    return `Last time: top set ${top} reps @ ${w>0?`+${wOut(w)} ${unitLabel()}`:'bodyweight'} — add ${S.kgMode?'2.5 kg':'5 lb'} today.`;
   }
   return '';
 }
@@ -463,7 +523,9 @@ function renderOverrideDay(){
   const proto=isTest?TMTEST:DELOAD;
   const wts=proto.pct.map(p=>rnd(tm*p));
   let html=`<div class="card">
-    <h2>${L.name} <span class="sub">TM ${tm}</span></h2>`;
+    <h2>${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2>
+    ${rackLine(d.liftId)}
+    ${unitSeg()}`;
   if(o.type==='seventh'){
     html+=`<div class="seg">
       <button data-ovmode="tmtest" class="${o.mode==='tmtest'?'on':''}">TM Test</button>
@@ -476,13 +538,13 @@ function renderOverrideDay(){
   <div class="card"><h2>${isTest?'TM Test':'Deload'} sets</h2>
     ${wts.map((w,i)=>`
       <div class="setrow">
-        <span class="wt">${w}</span><span class="rx">× ${proto.reps[i]}</span>
+        <span class="wt">${dispW(w)}</span><span class="rx">× ${proto.reps[i]}</span>
         <span class="plates">${plates(w,bar)}</span>
         <button class="chk ${d.checks[i]?'on':''}" data-ov="${i}">✓</button>
       </div>`).join('')}
     ${isTest?`
       <div class="setrow">
-        <span class="wt">${tm}</span><span class="rx">× 3–5</span>
+        <span class="wt">${dispW(tm)}</span><span class="rx">× 3–5</span>
         <span class="plates">${plates(tm,bar)}</span>
         <input class="amrap" type="number" inputmode="numeric" id="tmReps" placeholder="reps" value="${esc(d.tmReps)}">
       </div>
@@ -493,6 +555,7 @@ function renderOverrideDay(){
   ${storageWarn()}`;
   $('#main').innerHTML=html;
 
+  bindUnitSeg();
   document.querySelectorAll('[data-ovmode]').forEach(b=>b.onclick=()=>{
     o.mode=b.dataset.ovmode;S.draft=null;save();render();});
   document.querySelectorAll('[data-ov]').forEach(b=>b.onclick=()=>{
@@ -504,10 +567,10 @@ function renderOverrideDay(){
 }
 function tmVerdict(tm,reps){
   if(!reps) return '';
-  if(reps>=5) return `${reps} strong reps — TM validated. est. 1RM <b>${e1rm(tm,reps)}</b>`;
+  if(reps>=5) return `${reps} strong reps — TM validated. est. 1RM <b>${dispW(e1rm(tm,reps))}</b> ${unitLabel()}`;
   if(reps>=3) return `${reps} reps — TM is workable. Watch bar speed this cycle.`;
   const newTM=rnd(0.85*e1rm(tm,reps||1));
-  return `Under 3 reps — TM too high. Reset to ~<b>${newTM}</b> in Settings.`;
+  return `Under 3 reps — TM too high. Reset to ~<b>${newTM} lb</b> in Settings.`;
 }
 function finishOverrideDay(d,wts,tm,isTest){
   const o=S.override;
@@ -709,6 +772,12 @@ function renderSettings(){
     <p class="note">Auto-bumped +5 (press/bench) and +10 (squat/dead) each cycle. A failed TM test
     (under 3 reps) means reset that lift to ~85% of current est. 1RM.</p>
   </div>
+  <div class="card"><h2>Rack setup <span class="sub">hole numbers, shown on training days</span></h2>
+    ${LIFTS.map(l=>`<div class="kv"><label>${l.name}</label>
+      <input type="number" inputmode="numeric" id="s-rh-${l.id}" placeholder="hooks" style="width:88px" value="${esc((S.rack[l.id]||{}).h??'')}">
+      <input type="number" inputmode="numeric" id="s-rs-${l.id}" placeholder="safeties" style="width:88px" value="${esc((S.rack[l.id]||{}).s??'')}"></div>`).join('')}
+    <p class="note">Leave blank for lifts that don't use the rack (e.g., trap bar).</p>
+  </div>
   <div class="card"><h2>Deload schedule</h2>
     <div class="kv"><label>Mode</label>
       <select id="s-deload" class="wide">
@@ -758,6 +827,7 @@ function renderSettings(){
     LIFTS.forEach(l=>{
       const v=parseFloat($(`#s-tm-${l.id}`).value); if(v>0)S.tms[l.id]=v;
       const b=$(`#s-bar-${l.id}`).value; S.barWeights[l.id]=b===''?'':parseFloat(b);
+      S.rack[l.id]={h:$(`#s-rh-${l.id}`).value, s:$(`#s-rs-${l.id}`).value};
     });
     S.rounding=parseFloat($('#s-round').value);
     S.deloadMode=$('#s-deload').value;
