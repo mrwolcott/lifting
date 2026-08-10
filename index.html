@@ -20,8 +20,8 @@
     --text:#ffffff;
     --text2:#c3c2b7;
     --muted:#8a8980;
-    --accent:#3987e5;
-    --accent-dim:#2a5e9e;
+    --accent:#D97757;
+    --accent-dim:#b35f42;
     --warn:#c98500;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -75,6 +75,9 @@
   .lockrow b{flex:1;font-size:15px}
   .lastuse{font-size:12px;color:var(--muted);margin-top:6px}
   .rackline{font-size:14px;color:var(--text2);margin-top:6px;font-weight:600}
+  .timerbar{position:sticky;top:0;z-index:4;background:var(--surface);display:flex;align-items:center;
+    gap:10px;padding:8px 4px;margin:0 -2px}
+  .timerbar .tval{font-size:24px;font-weight:800;flex:1;font-variant-numeric:tabular-nums}
   textarea{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--text);
     padding:10px;font-size:15px;min-height:60px;resize:vertical;font-family:inherit}
   nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);
@@ -166,19 +169,24 @@ const ACC = {
     {g:'Triceps',n:'EZ Bar Skullcrushers'},{g:'Triceps',n:'Overhead DB Extension'},
     {g:'Triceps',n:'Band Pushdowns'},{g:'Triceps',n:'Close-Grip Pushups'},
   ],
-  slcore:[
+  traps:[
+    {g:'Shrugs',n:'Trap Bar Shrug'},{g:'Shrugs',n:'DB Shrug'},{g:'Shrugs',n:'Barbell Shrug'},
+    {g:'Carries',n:'Farmer Carry'},{g:'Carries',n:'Suitcase Carry'},{g:'Carries',n:'Sandbag Bear-Hug Carry'},
+  ],
+  legs:[
     {g:'Single-Leg',n:'RFE Split Squat'},{g:'Single-Leg',n:'Walking Lunge (DB/Vest)'},
     {g:'Single-Leg',n:'Box Step-Up'},{g:'Single-Leg',n:'Single-Leg RDL'},
     {g:'Posterior & Legs',n:'Barbell RDL'},{g:'Posterior & Legs',n:'Hip Thrust'},{g:'Posterior & Legs',n:'KB Swing'},
     {g:'Posterior & Legs',n:'Glute-Ham Roller Curl'},
     {g:'Posterior & Legs',n:'Goblet Squat'},{g:'Posterior & Legs',n:'Standing Calf Raise (DB)'},
-    {g:'Carries & Sandbag',n:'Farmer Carry'},{g:'Carries & Sandbag',n:'Suitcase Carry'},
-    {g:'Carries & Sandbag',n:'Sandbag Bear-Hug Carry'},{g:'Carries & Sandbag',n:'Sandbag Shouldering'},{g:'Carries & Sandbag',n:'Sandbag Squat'},
+    {g:'Sandbag',n:'Sandbag Shouldering'},{g:'Sandbag',n:'Sandbag Squat'},
+  ],
+  core:[
     {g:'Core',n:'Hanging Leg Raise'},{g:'Core',n:'Landmine Rotation'},{g:'Core',n:'Med Ball Slam'},
     {g:'Core',n:'Weighted Plank (Vest)'},{g:'Core',n:'Med Ball Situps'},
   ],
 };
-const CATLABEL = {push:'Push', pull:'Pull', slcore:'Single-Leg / Core', arms:'Arms'};
+const CATLABEL = {push:'Push', pull:'Pull', arms:'Arms', traps:'Traps & Carries', legs:'Lower Body', core:'Core'};
 const LOCKED_PULL = {press:'Neutral-Grip Pullups', bench:'Pendlay Row'};
 const PLATES = [45,25,10,5,2.5];
 const KG_PLATES = [25,20,15,10,5,2.5,1.25];
@@ -200,7 +208,10 @@ function defaults(){
     locks:{cycle:0,map:{}},
     kgMode:false,
     rack:{press:{h:'',s:''},dl:{h:'',s:''},bench:{h:'',s:''},squat:{h:'',s:''}},
-    accEdits:{removed:{push:[],pull:[],slcore:[],arms:[]}, added:{push:[],pull:[],slcore:[],arms:[]}},
+    accEdits:{removed:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]},
+              added:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]}},
+    keepAwake:true,
+    timer:{acc:0,startTs:null},
     deloadMode:'seventh',   /* 'none' | 'week4' | 'seventh' */
     override:null,          /* {type:'deload'|'seventh', day:0-3, mode:'deload'|'tmtest', bumpAfter:bool, manual:bool} */
     sheetsUrl:'',
@@ -229,7 +240,7 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 /* ---- units: state/history are always lb; kg is an entry/display layer ---- */
 const BB_MOVES=new Set(['Pendlay Row','Neutral-Grip Pullups','Neutral-Grip Pullups (extra)','Chin-Ups (Belt)',
   'Weighted Dips (Belt)','Barbell Curl','EZ Bar Curl','EZ Bar Skullcrushers','Skullcrushers (Swiss Bar)',
-  'Barbell RDL','Hip Thrust','Trap Bar Shrug','Landmine Press','Half-Kneeling Landmine Press',
+  'Barbell RDL','Hip Thrust','Trap Bar Shrug','Barbell Shrug','Landmine Press','Half-Kneeling Landmine Press',
   'Landmine (Meadows) Row','Landmine Rotation']);
 function isBB(n){
   if(BB_MOVES.has(n)) return true;
@@ -285,6 +296,54 @@ function bindUnitSeg(){
   if(kg) kg.onclick=()=>{S.kgMode=true;save();render();};
 }
 function flash(msg){const f=$('#flash');f.textContent=msg;f.classList.add('show');setTimeout(()=>f.classList.remove('show'),1800);}
+
+/* ---- workout timer ---- */
+function timerElapsed(){
+  const t=S.timer||{};
+  let s=t.acc||0;
+  if(t.startTs) s+=(Date.now()-t.startTs)/1000;
+  return Math.max(0,Math.floor(s));
+}
+function fmtTimer(s){
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+  return (h?`${h}:${String(m).padStart(2,'0')}`:`${m}`)+':'+String(sec).padStart(2,'0');
+}
+function timerBar(){
+  const running=S.timer&&S.timer.startTs;
+  return `<div class="timerbar">
+    <span class="tval" id="tmrVal">${fmtTimer(timerElapsed())}</span>
+    <button class="btn small" id="tmrGo">${running?'Pause':'Start'}</button>
+    <button class="btn ghost small" id="tmrReset">Reset</button>
+  </div>`;
+}
+function bindTimer(){
+  const go=$('#tmrGo'),rs=$('#tmrReset');
+  if(!go) return;
+  go.onclick=()=>{
+    if(!S.timer) S.timer={acc:0,startTs:null};
+    if(S.timer.startTs){S.timer.acc=timerElapsed();S.timer.startTs=null;}
+    else S.timer.startTs=Date.now();
+    save();go.textContent=S.timer.startTs?'Pause':'Start';
+  };
+  rs.onclick=()=>{
+    S.timer={acc:0,startTs:null};save();
+    $('#tmrVal').textContent=fmtTimer(0);go.textContent='Start';
+  };
+}
+setInterval(()=>{const el=document.querySelector('#tmrVal');if(el&&S.timer&&S.timer.startTs)el.textContent=fmtTimer(timerElapsed());},1000);
+function takeDuration(){
+  const s=timerElapsed();
+  S.timer={acc:0,startTs:null};
+  return s>0?Math.max(1,Math.round(s/60)):'';
+}
+
+/* ---- screen wake lock ---- */
+let wakeLock=null;
+async function acquireWake(){
+  if(S.keepAwake===false||!('wakeLock' in navigator)) return;
+  try{wakeLock=await navigator.wakeLock.request('screen');}catch(e){}
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')acquireWake();});
 function ensureLocks(){ if(!S.locks||S.locks.cycle!==S.pointer.cycle){S.locks={cycle:S.pointer.cycle,map:{}};save();} }
 function lockKey(liftId,cat){return `${liftId}:${cat}`;}
 /* last-used lookup for any movement name (accessories + locked pulls) */
@@ -320,7 +379,7 @@ function blankDraft(liftId){
   const d={liftId, date:todayISO(), main:[false,false,false], amrap:'', fsl:[false,false,false,false,false],
     pull:lk?{name:lk, weight:(liftId==='press'?S.pullupWeight:S.pendlayWeight)||'', reps:['','','','','']}:null,
     acc:{}, notes:''};
-  const slots=lk?['push','arms']:['push','pull','slcore'];
+  const slots=lk?['push','arms']:['traps','legs','core'];
   for(const cat of slots){
     const locked=S.locks.map[lockKey(liftId,cat)]||'';
     const u=locked?lastUse(locked):null;
@@ -394,6 +453,7 @@ function renderToday(){
   const isW1=S.pointer.week===0;
 
   let html=`
+  ${timerBar()}
   <div class="card">
     <div class="row">
       <div class="grow"><h2 style="margin:0">${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2></div>
@@ -445,7 +505,7 @@ function renderToday(){
       ${lu?`<div class="lastuse">${lu}</div>`:''}
     </div>`;
   }
-  const slots=d.pull?['push','arms']:['push','pull','slcore'];
+  const slots=d.pull?['push','arms']:['traps','legs','core'];
   for(const cat of slots){
     const a=d.acc[cat]||{name:'',weight:'',reps:''};
     const locked=S.locks.map[lockKey(d.liftId,cat)];
@@ -476,6 +536,7 @@ function renderToday(){
   $('#main').innerHTML=html;
 
   /* events */
+  bindTimer();
   $('#daySel').onchange=e=>{S.pointer.day=+e.target.value;S.draft=null;save();render();};
   document.querySelectorAll('[data-main]').forEach(b=>b.onclick=()=>{const i=+b.dataset.main;d.main[i]=!d.main[i];b.classList.toggle('on',d.main[i]);save();});
   document.querySelectorAll('[data-fsl]').forEach(b=>b.onclick=()=>{const i=+b.dataset.fsl;d.fsl[i]=!d.fsl[i];b.classList.toggle('on',d.fsl[i]);save();});
@@ -539,7 +600,8 @@ function renderOverrideDay(){
   const isTest=o.type==='seventh'&&o.mode==='tmtest';
   const proto=isTest?TMTEST:DELOAD;
   const wts=proto.pct.map(p=>rnd(tm*p));
-  let html=`<div class="card">
+  let html=`${timerBar()}
+  <div class="card">
     <h2>${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2>
     ${rackLine(d.liftId)}
     ${unitSeg()}`;
@@ -573,6 +635,7 @@ function renderOverrideDay(){
   $('#main').innerHTML=html;
 
   bindUnitSeg();
+  bindTimer();
   document.querySelectorAll('[data-ovmode]').forEach(b=>b.onclick=()=>{
     o.mode=b.dataset.ovmode;S.draft=null;save();render();});
   document.querySelectorAll('[data-ov]').forEach(b=>b.onclick=()=>{
@@ -597,6 +660,7 @@ function finishOverrideDay(d,wts,tm,isTest){
     topWeight:isTest?tm:wts[2], amrap:isTest?(+d.tmReps||0):0,
     e1rm:isTest?e1rm(tm,+d.tmReps||0):0,
     mainDone:d.checks.filter(Boolean).length, fslDone:0, pull:null, acc:[], notes:d.notes,
+    durationMin:takeDuration(),
   });
   queueLastEntry();
   if(o.day>=3){
@@ -617,6 +681,7 @@ function finishSession(d,wts){
     pull:d.pull?{name:d.pull.name,weight:d.pull.weight,reps:d.pull.reps.filter(r=>r!=='').map(Number)}:null,
     acc:Object.entries(d.acc).filter(([,a])=>a.name).map(([cat,a])=>({cat,name:a.name,weight:a.weight,reps:a.reps})),
     notes:d.notes,
+    durationMin:takeDuration(),
   };
   S.history.push(entry);
   queueLastEntry();
@@ -667,6 +732,7 @@ function entryToRow(h){
     pullReps:h.pull?h.pull.reps.join('/'):'',
     accessories:(h.acc||[]).map(a=>`${a.name} ${a.reps||'?'}${a.weight?`@${a.weight}`:''}`).join(' | '),
     notes:h.notes||'',
+    durationMin:h.durationMin||'',
   };
 }
 function queueLastEntry(){
@@ -766,7 +832,7 @@ function renderHistory(){
         ${h.type==='tmtest'?`TM ${h.tm} × ${h.amrap||'—'}${h.e1rm?` → e1RM <b>${h.e1rm}</b>`:''}`
         :h.type==='deload'?`deload — top set ${h.topWeight}`
         :h.amrap?`${h.amrap} reps @ ${h.topWeight} → e1RM <b>${h.e1rm}</b> · FSL ${h.fslDone}/5`
-        :`top set ${h.topWeight} · FSL ${h.fslDone}/5`}</div>
+        :`top set ${h.topWeight} · FSL ${h.fslDone}/5`}${h.durationMin?` · ${h.durationMin} min`:''}</div>
       <div class="det">
         ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
         ${accs||(h.type?'':'no accessories logged')}${h.notes?`<br><i>${esc(h.notes)}</i>`:''}
@@ -796,7 +862,7 @@ function renderSettings(){
     <p class="note">Leave blank for lifts that don't use the rack (e.g., trap bar).</p>
   </div>
   <div class="card"><h2>Accessory menu <span class="sub">add or remove movements</span></h2>
-    <select id="am-cat">${['push','pull','slcore','arms'].map(c=>
+    <select id="am-cat">${['push','pull','arms','traps','legs','core'].map(c=>
       `<option value="${c}" ${AMCAT===c?'selected':''}>${CATLABEL[c]}</option>`).join('')}</select>
     <div id="am-list" style="margin-top:4px">${amListHtml()}</div>
     <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
@@ -840,6 +906,9 @@ function renderSettings(){
     <div class="kv"><label>Round to</label>
       <select id="s-round"><option value="5" ${+S.rounding===5?'selected':''}>5 lb</option>
       <option value="2.5" ${+S.rounding===2.5?'selected':''}>2.5 lb</option></select></div>
+    <div class="kv"><label>Keep screen awake</label>
+      <select id="s-awake"><option value="1" ${S.keepAwake!==false?'selected':''}>On</option>
+      <option value="0" ${S.keepAwake===false?'selected':''}>Off</option></select></div>
     <div class="kv"><label>Cycle</label><input type="number" inputmode="numeric" id="s-cycle" value="${S.pointer.cycle}"></div>
     <div class="kv"><label>Week</label><select id="s-week">${WEEKS.map((w,i)=>`<option value="${i}" ${S.pointer.week===i?'selected':''}>${w.label}</option>`).join('')}</select></div>
   </div>
@@ -865,6 +934,8 @@ function renderSettings(){
       S.rack[l.id]={h:$(`#s-rh-${l.id}`).value, s:$(`#s-rs-${l.id}`).value};
     });
     S.rounding=parseFloat($('#s-round').value);
+    S.keepAwake=$('#s-awake').value==='1';
+    if(S.keepAwake) acquireWake(); else if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}
     S.deloadMode=$('#s-deload').value;
     S.sheetsUrl=$('#s-sheets').value.trim();
     S.pointer.cycle=Math.max(1,parseInt($('#s-cycle').value)||1);
@@ -891,7 +962,7 @@ function renderSettings(){
     downloadFile(JSON.stringify(S,null,1),`fsl531-backup-${todayISO()}.json`,'application/json');
   };
   $('#csvBtn').onclick=()=>{
-    const cols=['id','date','cycle','week','lift','tm','topWeight','amrap','e1rm','fslDone','pullName','pullWeight','pullReps','accessories','notes'];
+    const cols=['id','date','cycle','week','lift','tm','topWeight','amrap','e1rm','fslDone','pullName','pullWeight','pullReps','accessories','notes','durationMin'];
     const csv=[cols.join(',')].concat(S.history.map(h=>{
       const r=entryToRow(h);
       return cols.map(c=>{const v=String(r[c]??'');return /[",\n]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}).join(',');
@@ -974,6 +1045,7 @@ function downloadFile(content,name,type){
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;render();});
 render();
 attemptSync();
+acquireWake();
 </script>
 </body>
 </html>
