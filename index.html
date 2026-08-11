@@ -189,7 +189,7 @@ const ACC = {
 const CATLABEL = {push:'Push', pull:'Pull', arms:'Arms', traps:'Traps & Carries', legs:'Lower Body', core:'Core'};
 const LOCKED_PULL = {press:'Neutral-Grip Pullups', bench:'Pendlay Row'};
 const PLATES = [45,25,10,5,2.5];
-const KG_PLATES = [20,10,5,2.5,1,0.5];
+const KG_PLATES = [20,10,5,2.5];
 const LB2KG = 0.45359237;
 
 /* ---------------- State ---------------- */
@@ -221,7 +221,11 @@ function defaults(){
 function loadState(){
   try{
     const raw=localStorage.getItem(KEY);
-    if(raw) return Object.assign(defaults(),JSON.parse(raw));
+    if(raw){
+      const st=Object.assign(defaults(),JSON.parse(raw));
+      if(+st.rounding!==5&&+st.rounding!==10) st.rounding=5; /* 2.5 lb option retired */
+      return st;
+    }
   }catch(e){storageOK=false;}
   return defaults();
 }
@@ -253,7 +257,7 @@ function accList(cat){
   return ACC[cat].filter(it=>!rem.has(it.n)).concat(S.accEdits.added[cat]||[]);
 }
 const unitLabel=()=>S.kgMode?'kg':'lb';
-function rndKg(kg){const v=Math.round(kg/2.5)*2.5;return +v.toFixed(1);}
+function rndKg(kg){const step=(+S.rounding===10)?5:2.5;const v=Math.round(kg/step)*step;return +v.toFixed(1);}
 function dispW(lb){return S.kgMode?rndKg(lb*LB2KG):lb;}          /* computed barbell weights */
 function wOut(lb){                                               /* stored lb -> input display */
   if(lb===''||lb==null||isNaN(+lb)) return lb;
@@ -267,7 +271,7 @@ function plates(total,bar){
   bar=+bar; if(!bar||total<bar) return '';
   if(S.kgMode){
     let side=(rndKg(total*LB2KG)-bar*LB2KG)/2;
-    side=Math.max(0,Math.round(side/0.5)*0.5);
+    side=Math.max(0,Math.round(side/2.5)*2.5);
     if(side===0) return 'bar';
     let out=[];
     for(const p of KG_PLATES){const n=Math.floor(side/p+1e-9);if(n>0){out.push(n>1?`${n}×${p}`:`${p}`);side-=n*p;}}
@@ -904,8 +908,8 @@ function renderSettings(){
   </div>
   <div class="card"><h2>Rounding & position</h2>
     <div class="kv"><label>Round to</label>
-      <select id="s-round"><option value="5" ${+S.rounding===5?'selected':''}>5 lb</option>
-      <option value="2.5" ${+S.rounding===2.5?'selected':''}>2.5 lb</option></select></div>
+      <select id="s-round"><option value="5" ${+S.rounding===5?'selected':''}>5 lb / 2.5 kg</option>
+      <option value="10" ${+S.rounding===10?'selected':''}>10 lb / 5 kg</option></select></div>
     <div class="kv"><label>Keep screen awake</label>
       <select id="s-awake"><option value="1" ${S.keepAwake!==false?'selected':''}>On</option>
       <option value="0" ${S.keepAwake===false?'selected':''}>Off</option></select></div>
