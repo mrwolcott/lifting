@@ -235,7 +235,11 @@ function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){stora
 /* ---------------- Helpers ---------------- */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function rnd(w){const r=+S.rounding||5;return Math.round(w/r)*r;}
+function rnd(w){
+  const r=+S.rounding||5;
+  if(r===10) return Math.round((w-5)/10)*10+5;  /* 10-lb mode lands on ...5 — no 2.5 lb plates */
+  return Math.round(w/r)*r;
+}
 function e1rm(w,r){return r>0?Math.round(w*r*0.0333+w):0;}
 function lift(id){return LIFTS.find(l=>l.id===id);}
 function todayISO(){const d=new Date();return d.toISOString().slice(0,10);}
@@ -483,6 +487,7 @@ function renderToday(){
         <button class="chk ${d.main[i]?'on':''}" data-main="${i}">✓</button>
       </div>`).join('')}
     <div class="e1rm" id="e1rmLine">${d.amrap?e1rmLine(wts[2],+d.amrap):''}</div>
+    ${beatLine(d.liftId,wts[2])}
   </div>
 
   <div class="card">
@@ -584,6 +589,21 @@ function accOptions(cat,selected){
 function e1rmLine(w,r){
   if(!r||r<1) return '';
   return `AMRAP ${r} @ ${dispW(w)} → est. 1RM <b>${dispW(e1rm(w,r))}</b> ${unitLabel()}`;
+}
+function lastMain(liftId){
+  for(let i=S.history.length-1;i>=0;i--){
+    const h=S.history[i];
+    if(h.liftId===liftId&&h.e1rm>0&&h.amrap>0) return h;
+  }
+  return null;
+}
+function beatLine(liftId,topW){
+  const h=lastMain(liftId); if(!h) return '';
+  const tag=h.type==='tmtest'?'TM test':`W${h.week+1}`;
+  const need=Math.max(1,Math.floor((h.e1rm/topW-1)/0.0333)+1);
+  return `<div class="lastuse" style="margin-top:8px">
+    Last ${tag}: <b>${h.amrap} × ${dispW(h.topWeight)}</b> → e1RM ${dispW(h.e1rm)} ${unitLabel()} (${fmtDate(h.date)})<br>
+    Beat it today: <b>${need}+ reps</b> @ ${dispW(topW)} → e1RM ${dispW(e1rm(topW,need))}</div>`;
 }
 function pullupSuggestion(liftId){
   if(liftId!=='press') return '';
