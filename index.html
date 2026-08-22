@@ -1128,11 +1128,22 @@ function downloadFile(content,name,type){
 
 /* ---------------- Nav / boot ---------------- */
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;render();});
-/* on open: default to the first incomplete session (picker still allows detours mid-session) */
+/* on open: default to the EARLIEST incomplete session in the cycle.
+   Exception: a session you've started logging (any input in its draft) holds its place. */
+function draftDirty(d){
+  if(!d) return false;
+  return (d.main&&d.main.some(Boolean))||d.amrap||(d.fsl&&d.fsl.some(Boolean))||
+    (d.checks&&d.checks.some(Boolean))||d.tmReps||d.notes||
+    (d.pull&&d.pull.reps.some(r=>r!==''))||
+    Object.values(d.acc||{}).some(a=>a&&a.reps);
+}
 if(!S.override&&LIFTS.every(l=>S.tms[l.id]>0)){
-  if(sessionEntry(S.pointer.cycle,S.pointer.week,LIFTS[S.pointer.day].id)){
+  const holding=S.draft&&S.draft._ptr===ptrKey()&&draftDirty(S.draft);
+  if(!holding){
     const n=firstIncomplete(S.pointer.cycle);
-    if(n){S.pointer.week=n.week;S.pointer.day=n.day;save();}
+    if(n&&(n.week!==S.pointer.week||n.day!==S.pointer.day)){
+      S.pointer.week=n.week;S.pointer.day=n.day;S.draft=null;save();
+    }
   }
 }
 render();
