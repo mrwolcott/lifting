@@ -452,6 +452,9 @@ function storageWarn(){
 function renderToday(){
   if(!LIFTS.every(l=>S.tms[l.id]>0)){renderSetup();return;}
   if(S.override){renderOverrideDay();return;}
+  const curLift=LIFTS[S.pointer.day];
+  const doneEntry=sessionEntry(S.pointer.cycle,S.pointer.week,curLift.id);
+  if(doneEntry){renderDoneSession(doneEntry);return;}
   const d=getDraft();
   const L=lift(d.liftId), wk=WEEKS[S.pointer.week], tm=S.tms[L.id], bar=S.barWeights[L.id];
   const wts=wk.pct.map(p=>rnd(tm*p));
@@ -465,9 +468,7 @@ function renderToday(){
   <div class="card">
     <div class="row">
       <div class="grow"><h2 style="margin:0">${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2></div>
-      <select class="daysel" id="daySel" style="width:130px">
-        ${LIFTS.map((l,i)=>`<option value="${i}" ${l.id===d.liftId?'selected':''}>Day ${i+1}: ${l.name.split(' ').pop()}</option>`).join('')}
-      </select>
+      ${sessPicker()}
     </div>
     ${rackLine(d.liftId)}
     ${unitSeg()}
@@ -546,7 +547,7 @@ function renderToday(){
 
   /* events */
   bindTimer();
-  $('#daySel').onchange=e=>{S.pointer.day=+e.target.value;S.draft=null;save();render();};
+  bindSessPicker();
   document.querySelectorAll('[data-main]').forEach(b=>b.onclick=()=>{const i=+b.dataset.main;d.main[i]=!d.main[i];b.classList.toggle('on',d.main[i]);save();});
   document.querySelectorAll('[data-fsl]').forEach(b=>b.onclick=()=>{const i=+b.dataset.fsl;d.fsl[i]=!d.fsl[i];b.classList.toggle('on',d.fsl[i]);save();});
   const am=$('#amrap');
@@ -590,6 +591,35 @@ function e1rmLine(w,r){
   if(!r||r<1) return '';
   return `AMRAP ${r} @ ${dispW(w)} → est. 1RM <b>${dispW(e1rm(w,r))}</b> ${unitLabel()}`;
 }
+function sessionEntry(cycle,week,liftId){
+  for(let i=S.history.length-1;i>=0;i--){
+    const h=S.history[i];
+    if(!h.type&&h.cycle===cycle&&h.week===week&&h.liftId===liftId) return h;
+  }
+  return null;
+}
+function firstIncomplete(cyc){
+  for(let w=0;w<WEEKS.length;w++)for(let di=0;di<LIFTS.length;di++)
+    if(!sessionEntry(cyc,w,LIFTS[di].id)) return {week:w,day:di};
+  return null;
+}
+function sessPicker(){
+  return `<select class="daysel" id="sessSel" style="width:150px">
+    ${WEEKS.map((wk,wi)=>`<optgroup label="${wk.label}">${LIFTS.map((l,di)=>{
+      const done=sessionEntry(S.pointer.cycle,wi,l.id);
+      const sel=wi===S.pointer.week&&di===S.pointer.day?'selected':'';
+      return `<option value="${wi}-${di}" ${sel}>${done?'✓':'○'} ${l.name.split(' ').pop()}</option>`;
+    }).join('')}</optgroup>`).join('')}
+  </select>`;
+}
+function bindSessPicker(){
+  const s=$('#sessSel');
+  if(!s) return;
+  s.onchange=e=>{
+    const [w,di]=e.target.value.split('-').map(Number);
+    S.pointer.week=w; S.pointer.day=di; S.draft=null; save(); render();
+  };
+}
 function lastMain(liftId){
   for(let i=S.history.length-1;i>=0;i--){
     const h=S.history[i];
@@ -615,6 +645,39 @@ function pullupSuggestion(liftId){
     return `Last time: top set ${top} reps @ ${w>0?`+${wOut(w)} ${unitLabel()}`:'bodyweight'} — add ${S.kgMode?'2.5 kg':'5 lb'} today.`;
   }
   return '';
+}
+
+/* ------- Completed-session view ------- */
+function renderDoneSession(h){
+  const L=lift(h.liftId), wk=WEEKS[h.week];
+  const accs=(h.acc||[]).map(a=>`${a.name}${a.weight?` @${a.weight}`:''}${a.reps?` ×${a.reps}`:''}`).join('<br>');
+  $('#main').innerHTML=`
+  <div class="card">
+    <div class="row">
+      <div class="grow"><h2 style="margin:0">${L.name} <span class="sub">${wk.label} · done</span></h2></div>
+      ${sessPicker()}
+    </div>
+  </div>
+  <div class="card">
+    <h2>Completed ${fmtDate(h.date)}</h2>
+    <div style="font-size:15px;line-height:1.7">
+      ${h.amrap?`Top set: <b>${h.amrap} × ${h.topWeight}</b> → e1RM <b>${h.e1rm}</b> lb<br>`:`Top set ${h.topWeight} lb<br>`}
+      FSL: ${h.fslDone}/5${h.durationMin?` · ${h.durationMin} min`:''}<br>
+      ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
+      ${accs||''}
+      ${h.notes?`<div class="note"><i>${esc(h.notes)}</i></div>`:''}
+    </div>
+  </div>
+  <button class="btn ghost" id="redoBtn" style="color:#e66767">Reset &amp; redo this session</button>
+  <p class="note center">Resetting removes this session from the app log so you can do it over.
+  A row already synced to Sheets stays there; the redo adds a new row.</p>`;
+  bindSessPicker();
+  $('#redoBtn').onclick=()=>{
+    if(!confirm(`Delete the logged ${L.name} session from ${fmtDate(h.date)} and redo it?`)) return;
+    S.history=S.history.filter(x=>x.id!==h.id);
+    S.queue=S.queue.filter(q=>q.id!==h.id);
+    S.draft=null; save(); render(); flash('Session reset — go get it');
+  };
 }
 
 /* ------- Deload / 7th-week day ------- */
@@ -716,28 +779,26 @@ function finishSession(d,wts){
     const k=lockKey(d.liftId,a.cat);
     if(!S.locks.map[k]) S.locks.map[k]=a.name;
   }
-  /* advance pointer from the day just logged */
-  const dayIdx=LIFTS.findIndex(l=>l.id===d.liftId);
-  let {cycle,week}=S.pointer, day=dayIdx+1;
-  if(day>3){
-    day=0; week++;
-    if(week>2){
-      const done=cycle;
-      week=0; cycle++;
-      if(S.deloadMode==='week4'){
-        S.override={type:'deload',day:0,mode:'deload',bumpAfter:true,manual:false};
+  /* advance to the next incomplete session of this cycle */
+  const cyc=S.pointer.cycle;
+  const next=firstIncomplete(cyc);
+  if(next){
+    S.pointer={cycle:cyc,week:next.week,day:next.day};
+  } else {
+    const done=cyc;
+    S.pointer={cycle:cyc+1,week:0,day:0};
+    if(S.deloadMode==='week4'){
+      S.override={type:'deload',day:0,mode:'deload',bumpAfter:true,manual:false};
+    } else {
+      LIFTS.forEach(l=>S.tms[l.id]+=l.inc);
+      if(S.deloadMode==='seventh'&&done%2===0){
+        S.override={type:'seventh',day:0,mode:'tmtest',bumpAfter:false,manual:false};
+        setTimeout(()=>alert(`Two cycles down. 7th week is queued: TM-test your new TMs (or switch it to a straight deload on the day screen).`),200);
       } else {
-        LIFTS.forEach(l=>S.tms[l.id]+=l.inc);
-        if(S.deloadMode==='seventh'&&done%2===0){
-          S.override={type:'seventh',day:0,mode:'tmtest',bumpAfter:false,manual:false};
-          setTimeout(()=>alert(`Two cycles down. 7th week is queued: TM-test your new TMs (or switch it to a straight deload on the day screen).`),200);
-        } else {
-          setTimeout(()=>alert(`Cycle ${done} complete. TMs bumped: +5 press/bench, +10 squat/deadlift.`),200);
-        }
+        setTimeout(()=>alert(`Cycle ${done} complete. TMs bumped: +5 press/bench, +10 squat/deadlift.`),200);
       }
     }
   }
-  S.pointer={cycle,week,day};
   S.draft=null;
   save();
   flash('Session saved');
@@ -1067,6 +1128,13 @@ function downloadFile(content,name,type){
 
 /* ---------------- Nav / boot ---------------- */
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;render();});
+/* on open: default to the first incomplete session (picker still allows detours mid-session) */
+if(!S.override&&LIFTS.every(l=>S.tms[l.id]>0)){
+  if(sessionEntry(S.pointer.cycle,S.pointer.week,LIFTS[S.pointer.day].id)){
+    const n=firstIncomplete(S.pointer.cycle);
+    if(n){S.pointer.week=n.week;S.pointer.day=n.day;save();}
+  }
+}
 render();
 attemptSync();
 acquireWake();
