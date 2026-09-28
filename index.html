@@ -718,11 +718,21 @@ function renderOverrideDay(){
   </div>
   <div class="card"><h2>Notes</h2><textarea id="notes">${esc(d.notes)}</textarea></div>
   <button class="btn" id="finish">Finish ${isTest?'TM Test':'Deload'} Day</button>
+  <div style="height:8px"></div>
+  <button class="btn ghost" id="skipOv">Skip ${o.type==='seventh'?'the 7th week':'this deload'} — start next cycle</button>
   ${storageWarn()}`;
   $('#main').innerHTML=html;
 
   bindUnitSeg();
   bindTimer();
+  $('#skipOv').onclick=()=>{
+    const what=o.type==='seventh'?'the 7th week':'this deload week';
+    if(!confirm(`Skip ${what} and go straight into the next cycle? Days already logged this week are kept.`)) return;
+    S.override=null;
+    if(o.bumpAfter) LIFTS.forEach(l=>S.tms[l.id]+=l.inc);
+    S.draft=null; save(); render();
+    flash(o.bumpAfter?'Skipped — TMs bumped, next cycle up':'Skipped — next cycle up');
+  };
   document.querySelectorAll('[data-ovmode]').forEach(b=>b.onclick=()=>{
     o.mode=b.dataset.ovmode;S.draft=null;save();render();});
   document.querySelectorAll('[data-ov]').forEach(b=>b.onclick=()=>{
