@@ -74,6 +74,8 @@
   .lockrow{display:flex;align-items:center;gap:8px}
   .lockrow b{flex:1;font-size:15px}
   .lastuse{font-size:12px;color:var(--muted);margin-top:6px}
+  .exnote{margin-top:8px;font-size:14px;padding:8px 10px;min-height:38px !important;
+    border-style:dashed !important;color:var(--text2) !important}
   .rackline{font-size:14px;color:var(--text2);margin-top:6px;font-weight:600}
   .timerbar{position:sticky;top:0;z-index:4;background:var(--surface);display:flex;align-items:center;
     gap:10px;padding:8px 4px;margin:0 -2px}
@@ -207,6 +209,7 @@ function defaults(){
     draft:null,
     locks:{cycle:0,map:{}},
     kgMode:false,
+    exNotes:{},
     rack:{press:{h:'',s:''},dl:{h:'',s:''},bench:{h:'',s:''},squat:{h:'',s:''}},
     accEdits:{removed:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]},
               added:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]}},
@@ -489,6 +492,7 @@ function renderToday(){
       </div>`).join('')}
     <div class="e1rm" id="e1rmLine">${d.amrap?e1rmLine(wts[2],+d.amrap):''}</div>
     ${beatLine(d.liftId,wts[2])}
+    ${exNote(L.name)}
   </div>
 
   <div class="card">
@@ -513,6 +517,7 @@ function renderToday(){
       <div class="repgrid">${d.pull.reps.map((r,i)=>
         `<input type="number" inputmode="numeric" data-pullrep="${i}" placeholder="s${i+1}" value="${esc(r)}">`).join('')}</div>
       ${lu?`<div class="lastuse">${lu}</div>`:''}
+      ${exNote(d.pull.name)}
     </div>`;
   }
   const slots=d.pull?['push','arms']:['traps','legs','core'];
@@ -536,6 +541,7 @@ function renderToday(){
         <input type="number" inputmode="numeric" data-accreps="${cat}" placeholder="total reps" value="${esc(a.reps)}">
       </div>
       ${lu?`<div class="lastuse">${lu}</div>`:''}
+      ${a.name?exNote(a.name):''}
     </div>`;
   }
   html+=`</div>
@@ -548,6 +554,7 @@ function renderToday(){
   /* events */
   bindTimer();
   bindSessPicker();
+  bindExNotes();
   document.querySelectorAll('[data-main]').forEach(b=>b.onclick=()=>{const i=+b.dataset.main;d.main[i]=!d.main[i];b.classList.toggle('on',d.main[i]);save();});
   document.querySelectorAll('[data-fsl]').forEach(b=>b.onclick=()=>{const i=+b.dataset.fsl;d.fsl[i]=!d.fsl[i];b.classList.toggle('on',d.fsl[i]);save();});
   const am=$('#amrap');
@@ -628,12 +635,32 @@ function lastMain(liftId){
   return null;
 }
 function beatLine(liftId,topW){
-  const h=lastMain(liftId); if(!h) return '';
-  const tag=h.type==='tmtest'?'TM test':`W${h.week+1}`;
-  const need=Math.max(1,Math.floor((h.e1rm/topW-1)/0.0333)+1);
-  return `<div class="lastuse" style="margin-top:8px">
-    Last ${tag}: <b>${h.amrap} × ${dispW(h.topWeight)}</b> → e1RM ${dispW(h.e1rm)} ${unitLabel()} (${fmtDate(h.date)})<br>
-    Beat it today: <b>${need}+ reps</b> @ ${dispW(topW)} → e1RM ${dispW(e1rm(topW,need))}</div>`;
+  const last=lastMain(liftId); if(!last) return '';
+  let best=last;
+  for(const h of S.history){
+    if(h.liftId===liftId&&h.e1rm>0&&h.amrap>0&&h.e1rm>best.e1rm) best=h;
+  }
+  const row=(h,label)=>{
+    const tag=h.type==='tmtest'?'TM test':`W${h.week+1}`;
+    const need=Math.max(1,Math.floor((h.e1rm/topW-1)/0.0333)+1);
+    return `${label} (${tag} ${fmtDate(h.date)}): <b>${h.amrap} × ${dispW(h.topWeight)}</b> → e1RM ${dispW(h.e1rm)}
+      · beat: <b>${need}+ reps</b> @ ${dispW(topW)} → ${dispW(e1rm(topW,need))} ${unitLabel()}`;
+  };
+  let html=row(last,'Last');
+  if(best.id!==last.id) html+='<br>'+row(best,'All-time');
+  else html+=' <span style="color:var(--accent)">— all-time best</span>';
+  return `<div class="lastuse" style="margin-top:8px;line-height:1.6">${html}</div>`;
+}
+function exNote(name){
+  return `<input type="text" class="exnote" data-exnote="${esc(name)}"
+    placeholder="note for next time…" value="${esc((S.exNotes||{})[name]||'')}">`;
+}
+function bindExNotes(){
+  document.querySelectorAll('[data-exnote]').forEach(inp=>inp.oninput=()=>{
+    if(!S.exNotes) S.exNotes={};
+    S.exNotes[inp.dataset.exnote]=inp.value;
+    save();
+  });
 }
 function pullupSuggestion(liftId){
   if(liftId!=='press') return '';
@@ -715,6 +742,7 @@ function renderOverrideDay(){
         <input class="amrap" type="number" inputmode="numeric" id="tmReps" placeholder="reps" value="${esc(d.tmReps)}">
       </div>
       <div class="e1rm" id="verdict">${tmVerdict(tm,+d.tmReps)}</div>`:''}
+    ${exNote(L.name)}
   </div>
   <div class="card"><h2>Notes</h2><textarea id="notes">${esc(d.notes)}</textarea></div>
   <button class="btn" id="finish">Finish ${isTest?'TM Test':'Deload'} Day</button>
@@ -725,6 +753,7 @@ function renderOverrideDay(){
 
   bindUnitSeg();
   bindTimer();
+  bindExNotes();
   $('#skipOv').onclick=()=>{
     const what=o.type==='seventh'?'the 7th week':'this deload week';
     if(!confirm(`Skip ${what} and go straight into the next cycle? Days already logged this week are kept.`)) return;
