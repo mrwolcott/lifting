@@ -74,6 +74,17 @@
   .lockrow{display:flex;align-items:center;gap:8px}
   .lockrow b{flex:1;font-size:15px}
   .lastuse{font-size:12px;color:var(--muted);margin-top:6px}
+  .recrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .recrow label{flex:1;font-size:14px;color:var(--text2)}
+  .recrow input{width:90px}
+  .ready{border-radius:10px;padding:9px 12px;font-size:14px;margin-top:10px;border:1px solid var(--line);line-height:1.4}
+  .ready b{font-weight:800}
+  .ready.green{background:#16301a;border-color:#2e7d32;color:#a5d6a7}
+  .ready.amber{background:#3a2f14;border-color:var(--warn);color:#f0c060}
+  .ready.red{background:#3a1a1a;border-color:#c0504d;color:#f2a7a5}
+  .tgt-on{color:var(--text);font-weight:600}
+  .tgt-on::before{content:'▶ ';color:var(--accent)}
+  .tgt-off{opacity:.55}
   .exnote{margin-top:8px;font-size:14px;padding:8px 10px;min-height:38px !important;
     border-style:dashed !important;color:var(--text2) !important}
   .rackline{font-size:14px;color:var(--text2);margin-top:6px;font-weight:600}
@@ -210,6 +221,7 @@ function defaults(){
     locks:{cycle:0,map:{}},
     kgMode:false,
     exNotes:{},
+    readiness:{hi:85,lo:70},
     rack:{press:{h:'',s:''},dl:{h:'',s:''},bench:{h:'',s:''},squat:{h:'',s:''}},
     accEdits:{removed:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]},
               added:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]}},
@@ -474,6 +486,7 @@ function renderToday(){
       ${sessPicker()}
     </div>
     ${rackLine(d.liftId)}
+    ${recInput(d)}
     ${unitSeg()}
     <details class="warmups" style="margin-top:8px"><summary>Warmup — ${wu.map(w=>dispW(w)).join(' / ')}</summary>
       ${wu.map((w,i)=>`<div class="setrow"><span class="wt">${dispW(w)}</span><span class="rx">× ${WARMUP.reps[i]}</span>
@@ -491,7 +504,7 @@ function renderToday(){
         <button class="chk ${d.main[i]?'on':''}" data-main="${i}">✓</button>
       </div>`).join('')}
     <div class="e1rm" id="e1rmLine">${d.amrap?e1rmLine(wts[2],+d.amrap):''}</div>
-    ${beatLine(d.liftId,wts[2])}
+    <div id="readyWrap">${readinessBox(d.liftId,wts[2],d.recovery,wk.reps[2])}${beatLine(d.liftId,wts[2],recTier(d.recovery))}</div>
     ${exNote(L.name)}
   </div>
 
@@ -559,6 +572,11 @@ function renderToday(){
   document.querySelectorAll('[data-fsl]').forEach(b=>b.onclick=()=>{const i=+b.dataset.fsl;d.fsl[i]=!d.fsl[i];b.classList.toggle('on',d.fsl[i]);save();});
   const am=$('#amrap');
   if(am) am.oninput=()=>{d.amrap=am.value;$('#e1rmLine').innerHTML=d.amrap?e1rmLine(wts[2],+d.amrap):'';save();};
+  const ri=$('#recIn');
+  if(ri) ri.oninput=()=>{
+    d.recovery=cleanRec(ri.value); save();
+    $('#readyWrap').innerHTML=readinessBox(d.liftId,wts[2],d.recovery,wk.reps[2])+beatLine(d.liftId,wts[2],recTier(d.recovery));
+  };
   bindUnitSeg();
   const pw=$('#pullWt');
   if(pw) pw.oninput=()=>{d.pull.weight=wIn(pw.value);save();};
@@ -634,22 +652,66 @@ function lastMain(liftId){
   }
   return null;
 }
-function beatLine(liftId,topW){
-  const last=lastMain(liftId); if(!last) return '';
+function needReps(e1,topW){return Math.max(1,Math.floor((e1/topW-1)/0.0333)+1);}
+function beatData(liftId){
+  const last=lastMain(liftId); if(!last) return null;
   let best=last;
   for(const h of S.history){
     if(h.liftId===liftId&&h.e1rm>0&&h.amrap>0&&h.e1rm>best.e1rm) best=h;
   }
-  const row=(h,label)=>{
+  return {last,best,same:best.id===last.id};
+}
+/* readiness tier from Morpheus recovery % */
+function recTier(rec){
+  if(rec===''||rec==null||isNaN(+rec)) return null;
+  const r=S.readiness||{hi:85,lo:70};
+  return +rec>=r.hi?'green':+rec>=r.lo?'amber':'red';
+}
+function beatLine(liftId,topW,tier){
+  const bd=beatData(liftId); if(!bd) return '';
+  const row=(h,label,cls)=>{
     const tag=h.type==='tmtest'?'TM test':`W${h.week+1}`;
-    const need=Math.max(1,Math.floor((h.e1rm/topW-1)/0.0333)+1);
-    return `${label} (${tag} ${fmtDate(h.date)}): <b>${h.amrap} × ${dispW(h.topWeight)}</b> → e1RM ${dispW(h.e1rm)}
-      · beat: <b>${need}+ reps</b> @ ${dispW(topW)} → ${dispW(e1rm(topW,need))} ${unitLabel()}`;
+    const need=needReps(h.e1rm,topW);
+    return `<span class="${cls}">${label} (${tag} ${fmtDate(h.date)}): <b>${h.amrap} × ${dispW(h.topWeight)}</b> → e1RM ${dispW(h.e1rm)}
+      · beat: <b>${need}+ reps</b> @ ${dispW(topW)} → ${dispW(e1rm(topW,need))} ${unitLabel()}</span>`;
   };
-  let html=row(last,'Last');
-  if(best.id!==last.id) html+='<br>'+row(best,'All-time');
+  /* which target the readiness tier points at */
+  const lastCls=!tier?'':tier==='red'?'tgt-off':(tier==='amber'||bd.same)?'tgt-on':'tgt-off';
+  const bestCls=!tier?'':tier==='green'?'tgt-on':'tgt-off';
+  let html=row(bd.last,'Last',lastCls);
+  if(!bd.same) html+='<br>'+row(bd.best,'All-time',bestCls);
   else html+=' <span style="color:var(--accent)">— all-time best</span>';
   return `<div class="lastuse" style="margin-top:8px;line-height:1.6">${html}</div>`;
+}
+function readinessBox(liftId,topW,rec,setReps){
+  const tier=recTier(rec);
+  if(!tier) return `<div class="note" style="margin-top:8px">Enter today's Morpheus recovery above for a + set target.</div>`;
+  const bd=beatData(liftId);
+  const base=String(setReps).replace('+','');
+  let msg;
+  if(tier==='green'){
+    msg=`<b>Green light (${rec}%)</b> — chase the all-time best`+
+      (bd?`: <b>${needReps(bd.best.e1rm,topW)}+ reps</b>.`:'. Push the + set.');
+  } else if(tier==='amber'){
+    msg=`<b>Moderate (${rec}%)</b> — beat last session`+
+      (bd?`: <b>${needReps(bd.last.e1rm,topW)}+ reps</b>, then stop.`:'. Solid + set, no grinders.');
+  } else {
+    msg=`<b>Low (${rec}%)</b> — hit the prescribed <b>${base}</b>, leave reps in the tank. No chasing today.`;
+  }
+  return `<div class="ready ${tier}">${msg}</div>`;
+}
+function testReadyNote(rec){
+  return recTier(rec)==='red'
+    ?`<div class="ready red"><b>Low (${rec}%)</b> — a TM test today will read low. Consider testing this lift later in the week, or switch to Deload.</div>`:'';
+}
+function recInput(d){
+  return `<div class="recrow"><label>Morpheus recovery</label>
+    <input type="number" inputmode="numeric" id="recIn" min="0" max="100" placeholder="%" value="${esc(d.recovery??'')}"></div>`;
+}
+function cleanRec(v){
+  if(v===''||v==null) return '';
+  const n=Math.round(+v); if(isNaN(n)) return '';
+  return Math.max(0,Math.min(100,n));
 }
 function exNote(name){
   return `<input type="text" class="exnote" data-exnote="${esc(name)}"
@@ -689,7 +751,7 @@ function renderDoneSession(h){
     <h2>Completed ${fmtDate(h.date)}</h2>
     <div style="font-size:15px;line-height:1.7">
       ${h.amrap?`Top set: <b>${h.amrap} × ${h.topWeight}</b> → e1RM <b>${h.e1rm}</b> lb<br>`:`Top set ${h.topWeight} lb<br>`}
-      FSL: ${h.fslDone}/5${h.durationMin?` · ${h.durationMin} min`:''}<br>
+      FSL: ${h.fslDone}/5${h.durationMin?` · ${h.durationMin} min`:''}${h.recovery!==''&&h.recovery!=null?` · recovery ${h.recovery}%`:''}<br>
       ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
       ${accs||''}
       ${h.notes?`<div class="note"><i>${esc(h.notes)}</i></div>`:''}
@@ -718,6 +780,8 @@ function renderOverrideDay(){
   <div class="card">
     <h2>${L.name} <span class="sub">TM ${dispW(tm)} ${unitLabel()}</span></h2>
     ${rackLine(d.liftId)}
+    ${recInput(d)}
+    <div id="ovReady">${isTest?testReadyNote(d.recovery):''}</div>
     ${unitSeg()}`;
   if(o.type==='seventh'){
     html+=`<div class="seg">
@@ -754,6 +818,11 @@ function renderOverrideDay(){
   bindUnitSeg();
   bindTimer();
   bindExNotes();
+  const ri=$('#recIn');
+  if(ri) ri.oninput=()=>{
+    d.recovery=cleanRec(ri.value); save();
+    $('#ovReady').innerHTML=isTest?testReadyNote(d.recovery):'';
+  };
   $('#skipOv').onclick=()=>{
     const what=o.type==='seventh'?'the 7th week':'this deload week';
     if(!confirm(`Skip ${what} and go straight into the next cycle? Days already logged this week are kept.`)) return;
@@ -787,6 +856,7 @@ function finishOverrideDay(d,wts,tm,isTest){
     e1rm:isTest?e1rm(tm,+d.tmReps||0):0,
     mainDone:d.checks.filter(Boolean).length, fslDone:0, pull:null, acc:[], notes:d.notes,
     durationMin:takeDuration(),
+    recovery:cleanRec(d.recovery),
   });
   queueLastEntry();
   if(o.day>=3){
@@ -808,6 +878,7 @@ function finishSession(d,wts){
     acc:Object.entries(d.acc).filter(([,a])=>a.name).map(([cat,a])=>({cat,name:a.name,weight:a.weight,reps:a.reps})),
     notes:d.notes,
     durationMin:takeDuration(),
+    recovery:cleanRec(d.recovery),
   };
   S.history.push(entry);
   queueLastEntry();
@@ -857,6 +928,7 @@ function entryToRow(h){
     accessories:(h.acc||[]).map(a=>`${a.name} ${a.reps||'?'}${a.weight?`@${a.weight}`:''}`).join(' | '),
     notes:h.notes||'',
     durationMin:h.durationMin||'',
+    recovery:h.recovery===0?0:(h.recovery||''),
   };
 }
 function queueLastEntry(){
@@ -956,7 +1028,7 @@ function renderHistory(){
         ${h.type==='tmtest'?`TM ${h.tm} × ${h.amrap||'—'}${h.e1rm?` → e1RM <b>${h.e1rm}</b>`:''}`
         :h.type==='deload'?`deload — top set ${h.topWeight}`
         :h.amrap?`${h.amrap} reps @ ${h.topWeight} → e1RM <b>${h.e1rm}</b> · FSL ${h.fslDone}/5`
-        :`top set ${h.topWeight} · FSL ${h.fslDone}/5`}${h.durationMin?` · ${h.durationMin} min`:''}</div>
+        :`top set ${h.topWeight} · FSL ${h.fslDone}/5`}${h.durationMin?` · ${h.durationMin} min`:''}${h.recovery!==''&&h.recovery!=null?` · rec ${h.recovery}%`:''}</div>
       <div class="det">
         ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
         ${accs||(h.type?'':'no accessories logged')}${h.notes?`<br><i>${esc(h.notes)}</i>`:''}
@@ -1001,6 +1073,14 @@ function renderSettings(){
       <button class="btn ghost" id="am-add" style="margin-top:8px">Add movement</button>
       <button class="btn ghost small" id="am-restore" style="margin-top:8px">Restore removed defaults</button>
     </div>
+  </div>
+  <div class="card"><h2>Readiness thresholds <span class="sub">Morpheus recovery %</span></h2>
+    <div class="kv"><label>Green light at or above</label>
+      <input type="number" inputmode="numeric" id="s-rhi" value="${(S.readiness||{}).hi??85}"></div>
+    <div class="kv"><label>Low below</label>
+      <input type="number" inputmode="numeric" id="s-rlo" value="${(S.readiness||{}).lo??70}"></div>
+    <p class="note">Green: chase the all-time best on the + set. Between: beat last session.
+    Low: prescribed reps only. Starting values — tune once you have a cycle or two of data.</p>
   </div>
   <div class="card"><h2>Deload schedule</h2>
     <div class="kv"><label>Mode</label>
@@ -1059,6 +1139,13 @@ function renderSettings(){
     });
     S.rounding=parseFloat($('#s-round').value);
     S.keepAwake=$('#s-awake').value==='1';
+    {
+      let hi=Math.round(+$('#s-rhi').value), lo=Math.round(+$('#s-rlo').value);
+      if(!(hi>0&&hi<=100)) hi=85;
+      if(!(lo>0&&lo<=100)) lo=70;
+      if(lo>hi) lo=hi;
+      S.readiness={hi,lo};
+    }
     if(S.keepAwake) acquireWake(); else if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}
     S.deloadMode=$('#s-deload').value;
     S.sheetsUrl=$('#s-sheets').value.trim();
@@ -1086,7 +1173,7 @@ function renderSettings(){
     downloadFile(JSON.stringify(S,null,1),`fsl531-backup-${todayISO()}.json`,'application/json');
   };
   $('#csvBtn').onclick=()=>{
-    const cols=['id','date','cycle','week','lift','tm','topWeight','amrap','e1rm','fslDone','pullName','pullWeight','pullReps','accessories','notes','durationMin'];
+    const cols=['id','date','cycle','week','lift','tm','topWeight','amrap','e1rm','fslDone','pullName','pullWeight','pullReps','accessories','notes','durationMin','recovery'];
     const csv=[cols.join(',')].concat(S.history.map(h=>{
       const r=entryToRow(h);
       return cols.map(c=>{const v=String(r[c]??'');return /[",\n]/.test(v)?`"${v.replace(/"/g,'""')}"`:v;}).join(',');
@@ -1172,7 +1259,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{TAB=b.dataset.
 function draftDirty(d){
   if(!d) return false;
   return (d.main&&d.main.some(Boolean))||d.amrap||(d.fsl&&d.fsl.some(Boolean))||
-    (d.checks&&d.checks.some(Boolean))||d.tmReps||d.notes||
+    (d.checks&&d.checks.some(Boolean))||d.tmReps||d.notes||(d.recovery!==''&&d.recovery!=null)||
     (d.pull&&d.pull.reps.some(r=>r!==''))||
     Object.values(d.acc||{}).some(a=>a&&a.reps);
 }
