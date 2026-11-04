@@ -70,10 +70,20 @@
   .accslot:first-child{border-top:none;padding-top:0;margin-top:0}
   .cat{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:6px}
   .acc-inputs{display:flex;gap:8px;margin-top:8px}
-  .acc-inputs input{width:50%}
+  .acc-inputs input{width:100%}
   .lockrow{display:flex;align-items:center;gap:8px}
   .lockrow b{flex:1;font-size:15px}
   .lastuse{font-size:12px;color:var(--muted);margin-top:6px}
+  .lurow{display:flex;align-items:center;gap:8px;margin-top:6px}
+  .lurow .lastuse{margin-top:0}
+  .hbtn{padding:4px 12px !important;min-height:30px !important;font-size:12px !important;flex-shrink:0}
+  .setbtn{width:34px;min-width:34px;border-radius:10px;border:1px dashed var(--line);background:none;
+    color:var(--text2);font-size:18px;padding:0}
+  .exlog{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .exlog:last-child{border-bottom:none}
+  .exlog .dt{color:var(--muted);min-width:62px}
+  .exlog .vol{color:var(--text2);text-align:right;white-space:nowrap}
+  .chartcap{font-size:13px;color:var(--text2);min-height:18px;margin-top:4px}
   .recrow{display:flex;align-items:center;gap:10px;margin-top:10px}
   .recrow label{flex:1;font-size:14px;color:var(--text2)}
   .recrow input{width:90px}
@@ -200,7 +210,10 @@ const ACC = {
   ],
 };
 const CATLABEL = {push:'Push', pull:'Pull', arms:'Arms', traps:'Traps & Carries', legs:'Lower Body', core:'Core'};
-const LOCKED_PULL = {press:'Neutral-Grip Pullups', bench:'Pendlay Row'};
+/* non-negotiable movement paired with FSL each day */
+const LOCKED_PULL = {press:'Neutral-Grip Pullups', bench:'Pendlay Row', dl:'Step-Up', squat:'Lunge'};
+const UNILATERAL = new Set(['Step-Up','Lunge']);
+const DAY_SLOTS = {press:['push','arms'], bench:['push','arms'], dl:['traps','core'], squat:['traps','core']};
 const PLATES = [45,25,10,5,2.5];
 const KG_PLATES = [20,10,5,2.5];
 const LB2KG = 0.45359237;
@@ -226,6 +239,7 @@ function defaults(){
     accEdits:{removed:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]},
               added:{push:[],pull:[],arms:[],traps:[],legs:[],core:[]}},
     keepAwake:true,
+    bodyweight:225,
     timer:{acc:0,startTs:null},
     deloadMode:'seventh',   /* 'none' | 'week4' | 'seventh' */
     override:null,          /* {type:'deload'|'seventh', day:0-3, mode:'deload'|'tmtest', bumpAfter:bool, manual:bool} */
@@ -264,7 +278,9 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 const BB_MOVES=new Set(['Pendlay Row','Neutral-Grip Pullups','Neutral-Grip Pullups (extra)','Chin-Ups (Belt)',
   'Weighted Dips (Belt)','Barbell Curl','EZ Bar Curl','EZ Bar Skullcrushers','Skullcrushers (Swiss Bar)',
   'Barbell RDL','Hip Thrust','Trap Bar Shrug','Barbell Shrug','Landmine Press','Half-Kneeling Landmine Press',
-  'Landmine (Meadows) Row','Landmine Rotation']);
+  'Landmine (Meadows) Row','Landmine Rotation','Step-Up','Lunge']);
+/* bodyweight movements: volume = (bodyweight + added load) x reps */
+const BW_MOVES=new Set(['Neutral-Grip Pullups','Neutral-Grip Pullups (extra)','Chin-Ups (Belt)','Weighted Dips (Belt)']);
 function isBB(n){
   if(BB_MOVES.has(n)) return true;
   const a=S.accEdits&&S.accEdits.added;
@@ -375,10 +391,36 @@ function lastUse(name){
     const h=S.history[i];
     if(h.pull&&h.pull.name===name&&h.pull.reps.length)
       return {weight:h.pull.weight,repsArr:h.pull.reps,date:h.date};
-    const a=(h.acc||[]).find(x=>x.name===name&&(x.reps||x.weight));
-    if(a) return {weight:a.weight,reps:a.reps,date:a.date||h.date};
+    const a=(h.acc||[]).find(x=>x.name===name&&(x.reps||x.weight||(x.sets&&x.sets.length)));
+    if(a) return {weight:a.weight,reps:a.reps,repsArr:a.sets&&a.sets.length?a.sets:null,date:a.date||h.date};
   }
   return null;
+}
+/* every logged session of one movement, oldest first: {date, weight, sets[] | null, total} */
+function exerciseLog(name){
+  const out=[];
+  for(const h of S.history){
+    if(h.pull&&h.pull.name===name&&h.pull.reps.length){
+      const sets=h.pull.reps.map(Number);
+      out.push({date:h.date,weight:h.pull.weight,sets,total:sets.reduce((a,b)=>a+b,0),bw:h.bw});
+    }
+    for(const a of (h.acc||[])){
+      if(a.name!==name) continue;
+      const sets=a.sets&&a.sets.length?a.sets.map(Number):null;
+      const total=sets?sets.reduce((x,y)=>x+y,0):(+a.reps||0);
+      if(!total&&!a.weight) continue;
+      out.push({date:h.date,weight:a.weight,sets,total,bw:h.bw});
+    }
+  }
+  return out;
+}
+function loadText(name,w){
+  if(w===''||w==null||+w===0) return BW_MOVES.has(name)?'bodyweight':'';
+  const pre=BW_MOVES.has(name)?'+':'';
+  return isBB(name)?`${pre}${wOut(w)} ${unitLabel()}`:`${pre}${w}`;
+}
+function histBtn(name){
+  return `<button class="btn ghost small hbtn" data-exhist="${esc(name)}">history</button>`;
 }
 function lastUseText(name){
   const u=lastUse(name); if(!u) return '';
@@ -399,16 +441,30 @@ function blankDraft(liftId){
     return {liftId, date:todayISO(), ov:S.override.type, checks:[false,false,false], tmReps:'', notes:''};
   }
   const lk=LOCKED_PULL[liftId];
+  const lkW=liftId==='press'?S.pullupWeight:liftId==='bench'?S.pendlayWeight:((lastUse(lk)||{}).weight);
   const d={liftId, date:todayISO(), main:[false,false,false], amrap:'', fsl:[false,false,false,false,false],
-    pull:lk?{name:lk, weight:(liftId==='press'?S.pullupWeight:S.pendlayWeight)||'', reps:['','','','','']}:null,
+    pull:lk?{name:lk, weight:lkW||'', reps:['','','','','']}:null,
     acc:{}, notes:''};
-  const slots=lk?['push','arms']:['traps','legs','core'];
-  for(const cat of slots){
+  for(const cat of DAY_SLOTS[liftId]){
     const locked=S.locks.map[lockKey(liftId,cat)]||'';
     const u=locked?lastUse(locked):null;
-    d.acc[cat]={name:locked, weight:u&&u.weight!==''?u.weight:'', reps:''};
+    d.acc[cat]=newAcc(locked,u);
   }
   return d;
+}
+/* fresh accessory slot: carries last load forward and matches last session's set count (default 3) */
+function newAcc(name,u){
+  const n=u&&u.repsArr?Math.min(8,Math.max(1,u.repsArr.length)):3;
+  return {name:name||'', weight:u&&u.weight!==''&&u.weight!=null?u.weight:'', sets:Array(n).fill('')};
+}
+function accSets(a){                 /* older drafts stored a single total */
+  if(!a.sets) a.sets=['','',''];
+  return a.sets;
+}
+function accSummary(a){
+  const sets=a.sets&&a.sets.some(s=>s!=='')?a.sets.filter(s=>s!==''):null;
+  const reps=sets?sets.join('/'):(a.reps?`×${a.reps}`:'');
+  return `${a.name} ${reps}${a.weight?` @ ${loadText(a.name,a.weight)}`:''}`.trim();
 }
 function getDraft(){
   const cur=LIFTS[S.override?S.override.day:S.pointer.day].id;
@@ -420,6 +476,14 @@ function getDraft(){
 let TAB='today';
 let EXPANDED=null; /* expanded chart lift id */
 let AMCAT='push';  /* accessory-menu editor category */
+let EXNAME='', EXBACK={tab:'today',y:0}, EXMETRIC='vol';  /* per-exercise history page */
+function keepScroll(fn){const y=window.scrollY;fn();window.scrollTo(0,y);}
+function bindHistBtns(){
+  document.querySelectorAll('[data-exhist]').forEach(b=>b.onclick=()=>{
+    EXBACK={tab:TAB,y:window.scrollY};
+    EXNAME=b.dataset.exhist; EXMETRIC='vol'; TAB='exhist'; render();
+  });
+}
 function setPtrLabel(){
   let t;
   if(S.override){
@@ -433,6 +497,7 @@ function render(){
   setPtrLabel();
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===TAB));
   if(TAB==='today') renderToday();
+  else if(TAB==='exhist') renderExHist();
   else if(TAB==='history') renderHistory();
   else renderSettings();
   window.scrollTo(0,0);
@@ -521,21 +586,22 @@ function renderToday(){
   html+=`<div class="card"><h2>Assistance <span class="sub">25–50 reps per slot</span></h2>`;
   if(d.pull){
     const lu=lastUseText(d.pull.name);
+    const uni=UNILATERAL.has(d.pull.name), pbb=isBB(d.pull.name);
     html+=`<div class="accslot">
-      <div class="cat">Pull — non-negotiable</div>
+      <div class="cat">${uni?'Single-leg — non-negotiable · reps per leg':'Pull — non-negotiable'}</div>
       <div class="row"><b class="grow">${d.pull.name}</b>
         <input type="number" inputmode="decimal" style="width:92px" id="pullWt"
-          placeholder="${d.liftId==='press'?'+':''}${unitLabel()}" value="${esc(wOut(d.pull.weight))}"></div>
+          placeholder="${d.liftId==='press'?'+':''}${pbb?unitLabel():'load'}" value="${esc(pbb?wOut(d.pull.weight):d.pull.weight)}"></div>
       ${pullupHint?`<div class="banner">${pullupHint}</div>`:''}
       <div class="repgrid">${d.pull.reps.map((r,i)=>
         `<input type="number" inputmode="numeric" data-pullrep="${i}" placeholder="s${i+1}" value="${esc(r)}">`).join('')}</div>
-      ${lu?`<div class="lastuse">${lu}</div>`:''}
+      <div class="lurow"><div class="lastuse grow">${lu||'No history yet'}</div>${histBtn(d.pull.name)}</div>
       ${exNote(d.pull.name)}
     </div>`;
   }
-  const slots=d.pull?['push','arms']:['traps','legs','core'];
-  for(const cat of slots){
-    const a=d.acc[cat]||{name:'',weight:'',reps:''};
+  for(const cat of DAY_SLOTS[d.liftId]){
+    const a=d.acc[cat]||(d.acc[cat]=newAcc('',null));
+    const sets=accSets(a);
     const locked=S.locks.map[lockKey(d.liftId,cat)];
     const lu=a.name?lastUseText(a.name):'';
     const bb=isBB(a.name);
@@ -550,10 +616,13 @@ function renderToday(){
       </select>`;
     }
     html+=`<div class="acc-inputs">
-        <input type="number" inputmode="decimal" data-accwt="${cat}" placeholder="load${bb?` (${unitLabel()})`:''}" value="${esc(bb?wOut(a.weight):a.weight)}">
-        <input type="number" inputmode="numeric" data-accreps="${cat}" placeholder="total reps" value="${esc(a.reps)}">
+        <input type="number" inputmode="decimal" data-accwt="${cat}" placeholder="${BW_MOVES.has(a.name)?`+${unitLabel()} added (0 = bodyweight)`:`load${bb?` (${unitLabel()})`:''}`}" value="${esc(bb?wOut(a.weight):a.weight)}">
       </div>
-      ${lu?`<div class="lastuse">${lu}</div>`:''}
+      <div class="repgrid">${sets.map((r,i)=>
+        `<input type="number" inputmode="numeric" data-accset="${cat}:${i}" placeholder="s${i+1}" value="${esc(r)}">`).join('')}
+        ${sets.length<8?`<button class="setbtn" data-addset="${cat}" aria-label="add set">+</button>`:''}
+        ${sets.length>1?`<button class="setbtn" data-rmset="${cat}" aria-label="remove set">−</button>`:''}</div>
+      ${a.name?`<div class="lurow"><div class="lastuse grow">${lu||'No history yet'}</div>${histBtn(a.name)}</div>`:''}
       ${a.name?exNote(a.name):''}
     </div>`;
   }
@@ -579,22 +648,28 @@ function renderToday(){
   };
   bindUnitSeg();
   const pw=$('#pullWt');
-  if(pw) pw.oninput=()=>{d.pull.weight=wIn(pw.value);save();};
+  if(pw) pw.oninput=()=>{d.pull.weight=isBB(d.pull.name)?wIn(pw.value):pw.value;save();};
   document.querySelectorAll('[data-pullrep]').forEach(inp=>inp.oninput=()=>{d.pull.reps[+inp.dataset.pullrep]=inp.value;save();});
   document.querySelectorAll('[data-accsel]').forEach(sel=>sel.onchange=()=>{
-    const c=sel.dataset.accsel;d.acc[c]=d.acc[c]||{};d.acc[c].name=sel.value;
-    const u=sel.value?lastUse(sel.value):null;
-    if(u&&u.weight!==''&&(!d.acc[c].weight)) d.acc[c].weight=u.weight;
-    save();render();});
+    const c=sel.dataset.accsel;
+    const prevW=d.acc[c]&&d.acc[c].weight;
+    d.acc[c]=newAcc(sel.value,sel.value?lastUse(sel.value):null);
+    if(prevW&&!d.acc[c].weight) d.acc[c].weight=prevW;
+    save();keepScroll(render);});
   document.querySelectorAll('[data-swap]').forEach(b=>b.onclick=()=>{
     const c=b.dataset.swap;delete S.locks.map[lockKey(d.liftId,c)];
-    if(d.acc[c]) d.acc[c]={name:'',weight:'',reps:''};
-    save();render();});
+    d.acc[c]=newAcc('',null);
+    save();keepScroll(render);});
   document.querySelectorAll('[data-accwt]').forEach(inp=>inp.oninput=()=>{
-    const c=inp.dataset.accwt;d.acc[c]=d.acc[c]||{};
+    const c=inp.dataset.accwt;
     d.acc[c].weight=isBB(d.acc[c].name)?wIn(inp.value):inp.value;save();});
-  document.querySelectorAll('[data-accreps]').forEach(inp=>inp.oninput=()=>{
-    const c=inp.dataset.accreps;d.acc[c]=d.acc[c]||{};d.acc[c].reps=inp.value;save();});
+  document.querySelectorAll('[data-accset]').forEach(inp=>inp.oninput=()=>{
+    const [c,i]=inp.dataset.accset.split(':');accSets(d.acc[c])[+i]=inp.value;save();});
+  document.querySelectorAll('[data-addset]').forEach(b=>b.onclick=()=>{
+    const s=accSets(d.acc[b.dataset.addset]); if(s.length<8){s.push('');save();keepScroll(render);} });
+  document.querySelectorAll('[data-rmset]').forEach(b=>b.onclick=()=>{
+    const s=accSets(d.acc[b.dataset.rmset]); if(s.length>1){s.pop();save();keepScroll(render);} });
+  bindHistBtns();
   $('#notes').oninput=()=>{d.notes=$('#notes').value;save();};
   $('#finish').onclick=()=>finishSession(d,wts);
 }
@@ -739,7 +814,7 @@ function pullupSuggestion(liftId){
 /* ------- Completed-session view ------- */
 function renderDoneSession(h){
   const L=lift(h.liftId), wk=WEEKS[h.week];
-  const accs=(h.acc||[]).map(a=>`${a.name}${a.weight?` @${a.weight}`:''}${a.reps?` ×${a.reps}`:''}`).join('<br>');
+  const accs=(h.acc||[]).map(accSummary).join('<br>');
   $('#main').innerHTML=`
   <div class="card">
     <div class="row">
@@ -752,7 +827,7 @@ function renderDoneSession(h){
     <div style="font-size:15px;line-height:1.7">
       ${h.amrap?`Top set: <b>${h.amrap} × ${h.topWeight}</b> → e1RM <b>${h.e1rm}</b> lb<br>`:`Top set ${h.topWeight} lb<br>`}
       FSL: ${h.fslDone}/5${h.durationMin?` · ${h.durationMin} min`:''}${h.recovery!==''&&h.recovery!=null?` · recovery ${h.recovery}%`:''}<br>
-      ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
+      ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight}${isBB(h.pull.name)?' lb':''}`:''}<br>`:''}
       ${accs||''}
       ${h.notes?`<div class="note"><i>${esc(h.notes)}</i></div>`:''}
     </div>
@@ -856,6 +931,7 @@ function finishOverrideDay(d,wts,tm,isTest){
     e1rm:isTest?e1rm(tm,+d.tmReps||0):0,
     mainDone:d.checks.filter(Boolean).length, fslDone:0, pull:null, acc:[], notes:d.notes,
     durationMin:takeDuration(),
+    bw:+S.bodyweight||225,
     recovery:cleanRec(d.recovery),
   });
   queueLastEntry();
@@ -875,9 +951,13 @@ function finishSession(d,wts){
     topWeight:wts[2], amrap:+d.amrap||0, e1rm:e1rm(wts[2],+d.amrap||0),
     mainDone:d.main.filter(Boolean).length, fslDone:d.fsl.filter(Boolean).length,
     pull:d.pull?{name:d.pull.name,weight:d.pull.weight,reps:d.pull.reps.filter(r=>r!=='').map(Number)}:null,
-    acc:Object.entries(d.acc).filter(([,a])=>a.name).map(([cat,a])=>({cat,name:a.name,weight:a.weight,reps:a.reps})),
+    acc:Object.entries(d.acc).filter(([cat,a])=>a.name&&DAY_SLOTS[d.liftId].includes(cat)).map(([cat,a])=>{
+      const sets=accSets(a).filter(r=>r!=='').map(Number);
+      return {cat,name:a.name,weight:a.weight,sets,reps:sets.length?sets.reduce((x,y)=>x+y,0):(a.reps||'')};
+    }),
     notes:d.notes,
     durationMin:takeDuration(),
+    bw:+S.bodyweight||225,
     recovery:cleanRec(d.recovery),
   };
   S.history.push(entry);
@@ -925,7 +1005,7 @@ function entryToRow(h){
     topWeight:h.topWeight, amrap:h.amrap||'', e1rm:h.e1rm||'', fslDone:h.fslDone,
     pullName:h.pull?h.pull.name:'', pullWeight:h.pull?h.pull.weight:'',
     pullReps:h.pull?h.pull.reps.join('/'):'',
-    accessories:(h.acc||[]).map(a=>`${a.name} ${a.reps||'?'}${a.weight?`@${a.weight}`:''}`).join(' | '),
+    accessories:(h.acc||[]).map(a=>`${a.name} ${a.sets&&a.sets.length?a.sets.join('/'):(a.reps||'?')}${a.weight?`@${a.weight}`:''}`).join(' | '),
     notes:h.notes||'',
     durationMin:h.durationMin||'',
     recovery:h.recovery===0?0:(h.recovery||''),
@@ -990,6 +1070,81 @@ function bigChart(liftId){
     <text x="${W-R}" y="${H-8}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtDate(last.d)}</text>
   </svg>`;
 }
+/* ------- Per-exercise history page ------- */
+function sessBW(e){return +e.bw||+S.bodyweight||225;}   /* lb; older sessions use the current setting */
+function exVolume(name,e){
+  const w=(+e.weight||0)+(BW_MOVES.has(name)?sessBW(e):0);
+  return Math.round((isBB(name)?+wOut(w):w)*e.total);
+}
+function exChart(name,log,metric){
+  const pts=log.map(e=>({d:e.date,v:metric==='vol'?exVolume(name,e):e.total}));
+  if(!pts.length) return '';
+  const W=340,H=180,L=44,R=14,T=16,B=26;
+  const vals=pts.map(p=>p.v);
+  let mn=Math.min(...vals),mx=Math.max(...vals);
+  const pad=Math.max(1,(mx-mn)*0.12); mn=Math.max(0,mn-pad); mx+=pad;
+  const X=i=>pts.length===1?(L+(W-L-R)/2):L+i*(W-L-R)/(pts.length-1);
+  const Y=v=>T+(H-T-B)-(v-mn)/((mx-mn)||1)*(H-T-B);
+  const ticks=[mn,(mn+mx)/2,mx].map(v=>`
+    <line x1="${L}" y1="${Y(v).toFixed(1)}" x2="${W-R}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+    <text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--muted)">${Math.round(v).toLocaleString()}</text>`).join('');
+  const line=pts.map((p,i)=>`${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+  const dots=pts.map((p,i)=>`
+    <circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="14" fill="transparent" data-pt="${i}" style="cursor:pointer"/>
+    <circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="4" fill="var(--accent)" stroke="var(--card)" stroke-width="2" pointer-events="none"/>`).join('');
+  const last=pts[pts.length-1];
+  return `<svg class="bigchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${metric==='vol'?'session volume':'total reps'} by session">
+    ${ticks}
+    ${pts.length>1?`<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`:''}
+    ${dots}
+    <text x="${L}" y="${H-8}" font-size="11" fill="var(--muted)">${fmtDate(pts[0].d)}</text>
+    <text x="${W-R}" y="${H-8}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtDate(last.d)}</text>
+  </svg>`;
+}
+function renderExHist(){
+  const name=EXNAME, log=exerciseLog(name);
+  const uni=UNILATERAL.has(name), bwm=BW_MOVES.has(name);
+  const hasLoad=bwm||log.some(e=>+e.weight>0);
+  if(!hasLoad) EXMETRIC='reps';
+  const unitTxt=isBB(name)?unitLabel():'';
+  const vUnit=`${unitTxt?unitTxt+' ':''}× reps`;
+  let html=`<div class="card">
+    <button class="btn ghost small" id="exBack">← Back</button>
+    <h2 style="margin:12px 0 2px">${esc(name)}</h2>
+    <div class="note" style="margin:0">${log.length} session${log.length===1?'':'s'} logged${uni?' · reps are per leg':''}</div>
+  </div>`;
+  if(!log.length){
+    html+=`<div class="card"><p class="note" style="margin:0">Nothing logged for this movement yet.</p></div>`;
+  } else {
+    html+=`<div class="card">
+      <h2>${EXMETRIC==='vol'?'Session volume':'Total reps'} <span class="sub">${EXMETRIC==='vol'?(bwm?`(bodyweight + added) ${vUnit}`:`load ${vUnit}`):(uni?'per leg':'all sets')}</span></h2>
+      ${hasLoad?`<div class="seg" style="max-width:200px">
+        <button data-exm="vol" class="${EXMETRIC==='vol'?'on':''}">Volume</button>
+        <button data-exm="reps" class="${EXMETRIC==='reps'?'on':''}">Reps</button></div>`:''}
+      ${exChart(name,log,EXMETRIC)}
+      <div class="chartcap" id="chartCap">Tap a point for that session.</div>
+      ${bwm&&EXMETRIC==='vol'?`<p class="note">Uses the bodyweight saved with each session (Settings → Bodyweight).</p>`:''}
+      ${!hasLoad?`<p class="note">No load logged yet, so this charts total reps.</p>`:''}
+    </div>
+    <div class="card"><h2>Sessions</h2>
+      ${[...log].reverse().map(e=>`<div class="exlog">
+        <span class="dt">${fmtDate(e.date)}</span>
+        <span class="grow">${e.sets?`${e.sets.length} × ${e.sets.join('/')}`:`${e.total} total`}${loadText(name,e.weight)?` @ ${loadText(name,e.weight)}`:''}</span>
+        <span class="vol">${hasLoad&&(bwm||+e.weight>0)?exVolume(name,e).toLocaleString():`${e.total} reps`}</span>
+      </div>`).join('')}
+    </div>`;
+  }
+  $('#main').innerHTML=html;
+  $('#exBack').onclick=()=>{TAB=EXBACK.tab;render();window.scrollTo(0,EXBACK.y);};
+  document.querySelectorAll('[data-exm]').forEach(b=>b.onclick=()=>{EXMETRIC=b.dataset.exm;renderExHist();});
+  document.querySelectorAll('[data-pt]').forEach(c=>c.onclick=()=>{
+    const e=log[+c.dataset.pt];
+    const lt=loadText(name,e.weight);
+    $('#chartCap').innerHTML=`<b>${fmtDate(e.date)}</b> · ${e.sets?e.sets.join('/'):`${e.total} reps`}${lt?` @ ${lt}`:''} · `+
+      (EXMETRIC==='vol'?`volume ${exVolume(name,e).toLocaleString()}${bwm?` (bw ${isBB(name)?wOut(sessBW(e))+' '+unitLabel():sessBW(e)})`:''}`:`${e.total} reps`);
+  });
+}
+
 function renderHistory(){
   let html='';
   html+=`<h3 class="sec">Estimated 1RM by lift <span style="text-transform:none;letter-spacing:0">— tap a lift for the full graph</span></h3>`;
@@ -1020,7 +1175,7 @@ function renderHistory(){
   [...S.history].reverse().slice(0,80).forEach((h,i)=>{
     const L=lift(h.liftId);
     const wkTag=h.type==='deload'?'Deload':h.type==='tmtest'?'TM Test':`C${h.cycle} W${h.week+1}`;
-    const accs=(h.acc||[]).map(a=>`${a.name}${a.weight?` @${a.weight}`:''}${a.reps?` ×${a.reps}`:''}`).join(' · ');
+    const accs=(h.acc||[]).map(accSummary).join(' · ');
     html+=`<div class="histitem" data-hist="${i}">
       <div class="top"><span><b>${L.name}</b> <span style="color:var(--muted)">${wkTag}</span></span>
       <span class="dt">${fmtDate(h.date)}</span></div>
@@ -1030,7 +1185,7 @@ function renderHistory(){
         :h.amrap?`${h.amrap} reps @ ${h.topWeight} → e1RM <b>${h.e1rm}</b> · FSL ${h.fslDone}/5`
         :`top set ${h.topWeight} · FSL ${h.fslDone}/5`}${h.durationMin?` · ${h.durationMin} min`:''}${h.recovery!==''&&h.recovery!=null?` · rec ${h.recovery}%`:''}</div>
       <div class="det">
-        ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight} lb`:''}<br>`:''}
+        ${h.pull?`${h.pull.name}: ${h.pull.reps.join('/')||'—'}${+h.pull.weight?` @ ${h.liftId==='press'?'+':''}${h.pull.weight}${isBB(h.pull.name)?' lb':''}`:''}<br>`:''}
         ${accs||(h.type?'':'no accessories logged')}${h.notes?`<br><i>${esc(h.notes)}</i>`:''}
       </div>
     </div>`;
@@ -1102,6 +1257,12 @@ function renderSettings(){
       <button class="btn ghost small" id="syncAll">Re-send all history</button>
     </div>
   </div>
+  <div class="card"><h2>Bodyweight <span class="sub">always in pounds</span></h2>
+    <div class="kv"><label>Current bodyweight</label>
+      <input type="number" inputmode="decimal" id="s-bw" placeholder="lb" value="${S.bodyweight??225}"></div>
+    <p class="note">Used for pull-up, chin-up and dip volume: (bodyweight + added load) × reps.
+    Each session saves the bodyweight at the time, so updating this doesn't rewrite past sessions.</p>
+  </div>
   <div class="card"><h2>Bar weights <span class="sub">always in pounds — enables plate math</span></h2>
     ${LIFTS.map(l=>`<div class="kv"><label>${l.name}</label>
       <input type="number" inputmode="decimal" id="s-bar-${l.id}" placeholder="empty bar lb" value="${S.barWeights[l.id]||''}"></div>`).join('')}
@@ -1139,6 +1300,7 @@ function renderSettings(){
     });
     S.rounding=parseFloat($('#s-round').value);
     S.keepAwake=$('#s-awake').value==='1';
+    { const bw=parseFloat($('#s-bw').value); if(bw>0) S.bodyweight=bw; }
     {
       let hi=Math.round(+$('#s-rhi').value), lo=Math.round(+$('#s-rlo').value);
       if(!(hi>0&&hi<=100)) hi=85;
@@ -1261,7 +1423,7 @@ function draftDirty(d){
   return (d.main&&d.main.some(Boolean))||d.amrap||(d.fsl&&d.fsl.some(Boolean))||
     (d.checks&&d.checks.some(Boolean))||d.tmReps||d.notes||(d.recovery!==''&&d.recovery!=null)||
     (d.pull&&d.pull.reps.some(r=>r!==''))||
-    Object.values(d.acc||{}).some(a=>a&&a.reps);
+    Object.values(d.acc||{}).some(a=>a&&(a.reps||(a.sets&&a.sets.some(x=>x!==''))));
 }
 if(!S.override&&LIFTS.every(l=>S.tms[l.id]>0)){
   const holding=S.draft&&S.draft._ptr===ptrKey()&&draftDirty(S.draft);
